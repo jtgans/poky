@@ -8,7 +8,7 @@
 #
 # 'what' can be one of
 # * target: Returns the target name ("<arch>-<os>")
-# * endianess: Return "be" for big endian targets, "le" for little endian
+# * endianness: Return "be" for big endian targets, "le" for little endian
 # * bits: Returns the bit size of the target, either "32" or "64"
 # * libc: Returns the name of the c library used by the target
 #
@@ -24,12 +24,14 @@ def siteinfo_data(d):
         "armeb": "endian-big bit-32 arm-common arm-32",
         "avr32": "endian-big bit-32 avr32-common",
         "bfin": "endian-little bit-32 bfin-common",
+        "epiphany": "endian-little bit-32",
         "i386": "endian-little bit-32 ix86-common",
         "i486": "endian-little bit-32 ix86-common",
         "i586": "endian-little bit-32 ix86-common",
         "i686": "endian-little bit-32 ix86-common",
         "ia64": "endian-little bit-64",
         "microblaze": "endian-big bit-32 microblaze-common",
+        "microblazeeb": "endian-big bit-32 microblaze-common",
         "microblazeel": "endian-little bit-32 microblaze-common",
         "mips": "endian-big bit-32 mips-common",
         "mips64": "endian-big bit-64 mips-common",
@@ -95,6 +97,7 @@ def siteinfo_data(d):
         "x86_64-linux": "bit-64",
         "x86_64-linux-musl": "x86_64-linux bit-64",
         "x86_64-linux-uclibc": "bit-64",
+        "x86_64-elf": "bit-64",
         "x86_64-linux-gnu": "bit-64 x86_64-linux",
         "x86_64-linux-gnux32": "bit-32 ix86-common x32-linux",
         "x86_64-mingw32": "bit-64",

@@ -7,11 +7,11 @@ TOOLCHAIN_TARGET_TASK = ""
 
 TOOLCHAIN_HOST_TASK = "\
     nativesdk-glibc \
+    nativesdk-glibc-gconv-ibm850 \
     nativesdk-patchelf \
     "
 
 INHIBIT_DEFAULT_DEPS = "1"
-DEPENDS += "patchelf-native"
 
 TOOLCHAIN_OUTPUTNAME ?= "${BUILD_ARCH}-nativesdk-libc"
 
@@ -24,6 +24,9 @@ inherit populate_sdk
 
 deltask install
 deltask package
+deltask packagedata
+
+SDK_DEPENDS += "patchelf-native"
 
 SDK_PACKAGING_FUNC = ""
 

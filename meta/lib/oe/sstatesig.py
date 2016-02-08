@@ -94,6 +94,26 @@ class SignatureGeneratorOEBasicHash(bb.siggen.SignatureGeneratorBasicHash):
         self.machine = data.getVar("MACHINE", True)
         self.mismatch_msgs = []
         pass
+
+    def tasks_resolved(self, virtmap, virtpnmap, dataCache):
+        # Translate virtual/xxx entries to PN values
+        newabisafe = []
+        for a in self.abisaferecipes:
+            if a in virtpnmap:
+                newabisafe.append(virtpnmap[a])
+            else:
+                newabisafe.append(a)
+        self.abisaferecipes = newabisafe
+        newsafedeps = []
+        for a in self.saferecipedeps:
+            a1, a2 = a.split("->")
+            if a1 in virtpnmap:
+                a1 = virtpnmap[a1]
+            if a2 in virtpnmap:
+                a2 = virtpnmap[a2]
+            newsafedeps.append(a1 + "->" + a2)
+        self.saferecipedeps = newsafedeps
+
     def rundep_check(self, fn, recipename, task, dep, depname, dataCache = None):
         return sstate_rundepfilter(self, fn, recipename, task, dep, depname, dataCache)
 
@@ -206,9 +226,6 @@ def find_siginfo(pn, taskname, taskhashlist, d):
         if key.startswith('virtual:native:'):
             pn = pn + '-native'
 
-    if taskname in ['do_fetch', 'do_unpack', 'do_patch', 'do_populate_lic']:
-        pn.replace("-native", "")
-
     filedates = {}
 
     # First search in stamps dir
@@ -219,6 +236,10 @@ def find_siginfo(pn, taskname, taskhashlist, d):
     localdata.setVar('PR', '*')
     localdata.setVar('EXTENDPE', '')
     stamp = localdata.getVar('STAMP', True)
+    if pn.startswith("gcc-source"):
+        # gcc-source shared workdir is a special case :(
+        stamp = localdata.expand("${STAMPS_DIR}/work-shared/gcc-${PV}-${PR}")
+
     filespec = '%s.%s.sigdata.*' % (stamp, taskname)
     foundall = False
     import glob
@@ -249,7 +270,10 @@ def find_siginfo(pn, taskname, taskhashlist, d):
             localdata.setVar('PV', '*')
             localdata.setVar('PR', '*')
             localdata.setVar('BB_TASKHASH', hashval)
-            if pn.endswith('-native') or "-cross-" in pn or "-crosssdk-" in pn:
+            swspec = localdata.getVar('SSTATE_SWSPEC', True)
+            if taskname in ['do_fetch', 'do_unpack', 'do_patch', 'do_populate_lic', 'do_preconfigure'] and swspec:
+                localdata.setVar('SSTATE_PKGSPEC', '${SSTATE_SWSPEC}')
+            elif pn.endswith('-native') or "-cross-" in pn or "-crosssdk-" in pn:
                 localdata.setVar('SSTATE_EXTRAPATH', "${NATIVELSBSTRING}/")
             sstatename = taskname[3:]
             filespec = '%s_%s.*.siginfo' % (localdata.getVar('SSTATE_PKG', True), sstatename)
@@ -277,3 +301,15 @@ def find_siginfo(pn, taskname, taskhashlist, d):
         return filedates
 
 bb.siggen.find_siginfo = find_siginfo
+
+
+def sstate_get_manifest_filename(task, d):
+    """
+    Return the sstate manifest file path for a particular task.
+    Also returns the datastore that can be used to query related variables.
+    """
+    d2 = d.createCopy()
+    extrainf = d.getVarFlag("do_" + task, 'stamp-extra-info', True)
+    if extrainf:
+        d2.setVar("SSTATE_MANMACH", extrainf)
+    return (d2.expand("${SSTATE_MANFILEPREFIX}.%s" % task), d2)

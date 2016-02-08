@@ -1,5 +1,5 @@
 # remove tasks that modify the source tree in case externalsrc is inherited
-SRCTREECOVEREDTASKS += "do_kernel_link_vmlinux do_kernel_configme do_validate_branches do_kernel_configcheck do_kernel_checkout do_shared_workdir do_fetch do_unpack do_patch"
+SRCTREECOVEREDTASKS += "do_kernel_configme do_validate_branches do_kernel_configcheck do_kernel_checkout do_shared_workdir do_fetch do_unpack do_patch"
 
 # returns local (absolute) path names for all valid patches in the
 # src_uri
@@ -33,6 +33,7 @@ def find_kernel_feature_dirs(d):
     for url in fetch.urls:
         urldata = fetch.ud[url]
         parm = urldata.parm
+        type=""
         if "type" in parm:
             type = parm["type"]
         if "destsuffix" in parm:
@@ -51,11 +52,14 @@ def get_machine_branch(d, default):
         parm = urldata.parm
         if "branch" in parm:
             branches = urldata.parm.get("branch").split(',')
-            return branches[0]
+            btype = urldata.parm.get("type")
+            if btype != "kmeta":
+                return branches[0]
 	    
     return default
 
 do_kernel_metadata() {
+	set +e
 	cd ${S}
 	export KMETA=${KMETA}
 
@@ -75,22 +79,46 @@ do_kernel_metadata() {
 		machine_srcrev="${SRCREV}"
 	fi
 
-	# if we have a defined/set meta branch we should not be generating
-	# any meta data. The passed branch has what we need.
-	if [ -n "${KMETA}" ]; then
-		createme_flags="--disable-meta-gen --meta ${KMETA}"
+	# In a similar manner to the kernel itself:
+	#
+	#   defconfig: $(obj)/conf
+	#   ifeq ($(KBUILD_DEFCONFIG),)
+	#	$< --defconfig $(Kconfig)
+	#   else
+	#	@echo "*** Default configuration is based on '$(KBUILD_DEFCONFIG)'"
+	#	$(Q)$< --defconfig=arch/$(SRCARCH)/configs/$(KBUILD_DEFCONFIG) $(Kconfig)
+	#   endif
+	#
+	# If a defconfig is specified via the KBUILD_DEFCONFIG variable, we copy it
+	# from the source tree, into a common location and normalized "defconfig" name,
+	# where the rest of the process will include and incoroporate it into the build
+	#
+	# If the fetcher has already placed a defconfig in WORKDIR (from the SRC_URI),
+	# we don't overwrite it, but instead warn the user that SRC_URI defconfigs take
+	# precendence.
+	#
+	if [ -n "${KBUILD_DEFCONFIG}" ]; then
+		if [ -f "${S}/arch/${ARCH}/configs/${KBUILD_DEFCONFIG}" ]; then
+			if [ -f "${WORKDIR}/defconfig" ]; then
+				# If the two defconfig's are different, warn that we didn't overwrite the
+				# one already placed in WORKDIR by the fetcher.
+				cmp "${WORKDIR}/defconfig" "${S}/arch/${ARCH}/configs/${KBUILD_DEFCONFIG}"
+				if [ $? -ne 0 ]; then
+					bbwarn "defconfig detected in WORKDIR. ${KBUILD_DEFCONFIG} skipped"
+				fi
+			else
+				cp -f ${S}/arch/${ARCH}/configs/${KBUILD_DEFCONFIG} ${WORKDIR}/defconfig
+				sccs="${WORKDIR}/defconfig"
+			fi
+		else
+			bbfatal "A KBUILD_DECONFIG '${KBUILD_DEFCONFIG}' was specified, but not present in the source tree"
+		fi
 	fi
 
-	createme -v -v ${createme_flags} ${ARCH} ${machine_branch}
-	if [ $? -ne 0 ]; then
-		bbfatal "Could not create ${machine_branch}"
-	fi
-
-	sccs="${@" ".join(find_sccs(d))}"
+	sccs="$sccs ${@" ".join(find_sccs(d))}"
 	patches="${@" ".join(find_patches(d))}"
 	feat_dirs="${@" ".join(find_kernel_feature_dirs(d))}"
 
-	set +e
 	# add any explicitly referenced features onto the end of the feature
 	# list that is passed to the kernel build scripts.
 	if [ -n "${KERNEL_FEATURES}" ]; then
@@ -116,7 +144,7 @@ do_kernel_metadata() {
 	updateme ${updateme_flags} -DKDESC=${KMACHINE}:${LINUX_KERNEL_TYPE} \
                          ${includes} ${addon_features} ${ARCH} ${KMACHINE} ${sccs} ${patches}
 	if [ $? -ne 0 ]; then
-		bbfatal "Could not update ${machine_branch}"
+		bbfatal_log "Could not update ${machine_branch}"
 	fi
 }
 
@@ -127,11 +155,21 @@ do_patch() {
 	patchme ${KMACHINE}
 	if [ $? -ne 0 ]; then
 		bberror "Could not apply patches for ${KMACHINE}."
-		bbfatal "Patch failures can be resolved in the devshell (bitbake -c devshell ${PN})"
+		bbfatal_log "Patch failures can be resolved in the linux source directory ${S})"
 	fi
 
 	# check to see if the specified SRCREV is reachable from the final branch.
 	# if it wasn't something wrong has happened, and we should error.
+	machine_srcrev="${SRCREV_machine}"
+	if [ -z "${machine_srcrev}" ]; then
+		# fallback to SRCREV if a non machine_meta tree is being built
+		machine_srcrev="${SRCREV}"
+		# if SRCREV cannot be reached something is wrong.
+		if [ -z "${machine_srcrev}" ]; then
+			bbfatal "Neither SRCREV_machine or SRCREV was specified!"
+		fi
+	fi
+
 	if [ "${machine_srcrev}" != "AUTOINC" ]; then
 		if ! [ "$(git rev-parse --verify ${machine_srcrev}~0)" = "$(git merge-base ${machine_srcrev} HEAD)" ]; then
 			bberror "SRCREV ${machine_srcrev} was specified, but is not reachable"
@@ -143,34 +181,25 @@ do_patch() {
 do_kernel_checkout() {
 	set +e
 
-	# A linux yocto SRC_URI should use the bareclone option. That
-	# ensures that all the branches are available in the WORKDIR version
-	# of the repository.
 	source_dir=`echo ${S} | sed 's%/$%%'`
 	source_workdir="${WORKDIR}/git"
-	if [ -d "${WORKDIR}/git/" ] && [ -d "${WORKDIR}/git/.git" ]; then
-		# case2: the repository is a non-bare clone
-
+	if [ -d "${WORKDIR}/git/" ]; then
+		# case: git repository
 		# if S is WORKDIR/git, then we shouldn't be moving or deleting the tree.
 		if [ "${source_dir}" != "${source_workdir}" ]; then
-			rm -rf ${S}
-			mv ${WORKDIR}/git ${S}
+			if [ -d "${source_workdir}/.git" ]; then
+				# regular git repository with .git
+				rm -rf ${S}
+				mv ${WORKDIR}/git ${S}
+			else
+				# create source for bare cloned git repository
+				git clone ${WORKDIR}/git ${S}
+				rm -rf ${WORKDIR}/git
+			fi
 		fi
 		cd ${S}
-	elif [ -d "${WORKDIR}/git/" ] && [ ! -d "${WORKDIR}/git/.git" ]; then
-		# case2: the repository is a bare clone
-
-		# if S is WORKDIR/git, then we shouldn't be moving or deleting the tree.
-		if [ "${source_dir}" != "${source_workdir}" ]; then
-			rm -rf ${S}
-			mkdir -p ${S}/.git
-			mv ${WORKDIR}/git/* ${S}/.git
-			rm -rf ${WORKDIR}/git/
-		fi
-		cd ${S}	
-		git config core.bare false
 	else
-		# case 3: we have no git repository at all. 
+		# case: we have no git repository at all. 
 		# To support low bandwidth options for building the kernel, we'll just 
 		# convert the tree to a git repo and let the rest of the process work unchanged
 		
@@ -189,7 +218,6 @@ do_kernel_checkout() {
 		git commit -q -m "baseline commit: creating repo for ${PN}-${PV}"
 		git clean -d -f
 	fi
-	# end debare
 
 	# convert any remote branches to local tracking ones
 	for i in `git branch -a --no-color | grep remotes | grep -v HEAD`; do
@@ -200,32 +228,17 @@ do_kernel_checkout() {
 		fi
 	done
 
-       	# If KMETA is defined, the branch must exist, but a machine branch
-	# can be missing since it may be created later by the tools.
-	if [ -n "${KMETA}" ]; then
-		git show-ref --quiet --verify -- "refs/heads/${KMETA}"
-		if [ $? -eq 1 ]; then
-			bberror "The branch '${KMETA}' is required and was not found"
-			bberror "Ensure that the SRC_URI points to a valid linux-yocto"
-			bbfatal "kernel repository"
-		fi
-	fi
-	
-
 	# Create a working tree copy of the kernel by checking out a branch
 	machine_branch="${@ get_machine_branch(d, "${KBRANCH}" )}"
-	git show-ref --quiet --verify -- "refs/heads/${machine_branch}"
-	if [ $? -ne 0 ]; then
-		machine_branch="master"
-	fi
 
 	# checkout and clobber any unimportant files
 	git checkout -f ${machine_branch}
 }
 do_kernel_checkout[dirs] = "${S}"
 
-addtask kernel_checkout before do_patch after do_unpack
-addtask kernel_metadata after do_validate_branches before do_patch
+addtask kernel_checkout before do_kernel_metadata after do_unpack
+addtask kernel_metadata after do_validate_branches do_unpack before do_patch
+do_kernel_metadata[depends] = "kern-tools-native:do_populate_sysroot"
 
 do_kernel_configme[dirs] += "${S} ${B}"
 do_kernel_configme() {
@@ -246,14 +259,14 @@ do_kernel_configme() {
 	PATH=${PATH}:${S}/scripts/util
 	configme ${configmeflags} --reconfig --output ${B} ${LINUX_KERNEL_TYPE} ${KMACHINE}
 	if [ $? -ne 0 ]; then
-		bbfatal "Could not configure ${KMACHINE}-${LINUX_KERNEL_TYPE}"
+		bbfatal_log "Could not configure ${KMACHINE}-${LINUX_KERNEL_TYPE}"
 	fi
 	
 	echo "# Global settings from linux recipe" >> ${B}/.config
 	echo "CONFIG_LOCALVERSION="\"${LINUX_VERSION_EXTENSION}\" >> ${B}/.config
 }
 
-addtask kernel_configme after do_patch
+addtask kernel_configme before do_configure after do_patch
 
 python do_kernel_configcheck() {
     import re, string, sys
@@ -266,7 +279,7 @@ python do_kernel_configcheck() {
         kmeta = "." + kmeta
 
     pathprefix = "export PATH=%s:%s; " % (d.getVar('PATH', True), "${S}/scripts/util/")
-    cmd = d.expand("cd ${S}; kconf_check -config- %s/meta-series ${S} ${B}" % kmeta)
+    cmd = d.expand("cd ${S}; kconf_check -config %s/meta-series ${S} ${B}" % kmeta)
     ret, result = oe.utils.getstatusoutput("%s%s" % (pathprefix, cmd))
 
     config_check_visibility = int(d.getVar( "KCONF_AUDIT_LEVEL", True ) or 0)
@@ -304,7 +317,6 @@ python do_kernel_configcheck() {
 do_validate_branches() {
 	set +e
 	cd ${S}
-	export KMETA=${KMETA}
 
 	machine_branch="${@ get_machine_branch(d, "${KBRANCH}" )}"
 	machine_srcrev="${SRCREV_machine}"
@@ -325,31 +337,9 @@ do_validate_branches() {
 		git cat-file -t ${machine_srcrev} > /dev/null
 		if [ $? -ne 0 ]; then
 			bberror "${machine_srcrev} is not a valid commit ID."
-			bbfatal "The kernel source tree may be out of sync"
+			bbfatal_log "The kernel source tree may be out of sync"
 		fi
 		force_srcrev=${machine_srcrev}
-	fi
-
-	## KMETA branch validation.
-	target_meta_head="${SRCREV_meta}"
-	if [ "${target_meta_head}" = "AUTOINC" ] || [ "${target_meta_head}" = "" ]; then
-		bbnote "SRCREV validation skipped for AUTOREV or empty meta branch"
-	else
-	 	meta_head=`git show-ref -s --heads ${KMETA}`
-
-		git cat-file -t ${target_meta_head} > /dev/null
-		if [ $? -ne 0 ]; then
-			bberror "${target_meta_head} is not a valid commit ID"
-			bbfatal "The kernel source tree may be out of sync"
-		fi
-		if [ "$meta_head" != "$target_meta_head" ]; then
-			bbnote "Setting branch ${KMETA} to ${target_meta_head}"
-			git branch -m ${KMETA} ${KMETA}-orig
-			git checkout -q -b ${KMETA} ${target_meta_head}
-			if [ $? -ne 0 ];then
-				bbfatal "Could not checkout ${KMETA} branch from known hash ${target_meta_head}"
-			fi
-		fi
 	fi
 
 	git checkout -q -f ${machine_branch}
@@ -363,18 +353,6 @@ do_validate_branches() {
 			git reset --hard ${force_srcrev}
 		fi
 	fi
-}
-
-# Many scripts want to look in arch/$arch/boot for the bootable
-# image. This poses a problem for vmlinux based booting. This 
-# task arranges to have vmlinux appear in the normalized directory
-# location.
-do_kernel_link_vmlinux() {
-	if [ ! -d "${B}/arch/${ARCH}/boot" ]; then
-		mkdir ${B}/arch/${ARCH}/boot
-	fi
-	cd ${B}/arch/${ARCH}/boot
-	ln -sf ../../../vmlinux
 }
 
 OE_TERMINAL_EXPORTS += "KBUILD_OUTPUT"

@@ -8,7 +8,7 @@ and executables, so that far fewer relocations need to be resolved at \
 runtime and thus programs come up faster."
 LICENSE = "GPLv2"
 LIC_FILES_CHKSUM = "file://COPYING;md5=c93c0550bd3173f4504b2cbd8991e50b"
-SRCREV = "faa069deec99bf61418d0bab831c83d7c1b797ca"
+SRCREV = "927979bbd115eeb8a75db3231906ef6aca4c4eb6"
 PV = "1.0+git${SRCPV}"
 
 #
@@ -35,7 +35,7 @@ SRC_URI = "git://git.yoctoproject.org/prelink-cross.git;branch=cross_prelink \
 TARGET_OS_ORIG := "${TARGET_OS}"
 OVERRIDES_append = ":${TARGET_OS_ORIG}"
 
-S = "${WORKDIR}/git/trunk"
+S = "${WORKDIR}/git"
 
 inherit autotools 
 

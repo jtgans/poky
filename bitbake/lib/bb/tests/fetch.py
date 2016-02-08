@@ -315,6 +315,7 @@ class URITest(unittest.TestCase):
 class FetcherTest(unittest.TestCase):
 
     def setUp(self):
+        self.origdir = os.getcwd()
         self.d = bb.data.init()
         self.tempdir = tempfile.mkdtemp()
         self.dldir = os.path.join(self.tempdir, "download")
@@ -326,6 +327,7 @@ class FetcherTest(unittest.TestCase):
         self.d.setVar("PERSISTENT_DIR", persistdir)
 
     def tearDown(self):
+        os.chdir(self.origdir)
         bb.utils.prunedir(self.tempdir)
 
 class MirrorUriTest(FetcherTest):
@@ -391,6 +393,28 @@ class MirrorUriTest(FetcherTest):
         uris, uds = bb.fetch2.build_mirroruris(fetcher, mirrors, self.d)
         self.assertEqual(uris, ['file:///someotherpath/downloads/bitbake-1.0.tar.gz'])
 
+    def test_mirror_of_mirror(self):
+        # Test if mirror of a mirror works
+        mirrorvar = self.mirrorvar + " http://.*/.* http://otherdownloads.yoctoproject.org/downloads/ \n"
+        mirrorvar = mirrorvar + " http://otherdownloads.yoctoproject.org/.* http://downloads2.yoctoproject.org/downloads/ \n"
+        fetcher = bb.fetch.FetchData("http://downloads.yoctoproject.org/releases/bitbake/bitbake-1.0.tar.gz", self.d)
+        mirrors = bb.fetch2.mirror_from_string(mirrorvar)
+        uris, uds = bb.fetch2.build_mirroruris(fetcher, mirrors, self.d)
+        self.assertEqual(uris, ['file:///somepath/downloads/bitbake-1.0.tar.gz', 
+                                'file:///someotherpath/downloads/bitbake-1.0.tar.gz', 
+                                'http://otherdownloads.yoctoproject.org/downloads/bitbake-1.0.tar.gz',
+                                'http://downloads2.yoctoproject.org/downloads/bitbake-1.0.tar.gz'])
+
+    recmirrorvar = "https://.*/[^/]*    http://AAAA/A/A/A/ \n" \
+                   "https://.*/[^/]*    https://BBBB/B/B/B/ \n"
+
+    def test_recursive(self):
+        fetcher = bb.fetch.FetchData("https://downloads.yoctoproject.org/releases/bitbake/bitbake-1.0.tar.gz", self.d)
+        mirrors = bb.fetch2.mirror_from_string(self.recmirrorvar)
+        uris, uds = bb.fetch2.build_mirroruris(fetcher, mirrors, self.d)
+        self.assertEqual(uris, ['http://AAAA/A/A/A/bitbake/bitbake-1.0.tar.gz',
+                                'https://BBBB/B/B/B/bitbake/bitbake-1.0.tar.gz',
+                                'http://AAAA/A/A/A/B/B/bitbake/bitbake-1.0.tar.gz'])
 
 class FetcherLocalTest(FetcherTest):
     def setUp(self):
@@ -476,6 +500,19 @@ class FetcherNetworkTest(FetcherTest):
             fetcher.download()
             self.assertEqual(os.path.getsize(self.dldir + "/bitbake-1.0.tar.gz"), 57749)
 
+        def test_fetch_mirror_of_mirror(self):
+            self.d.setVar("MIRRORS", "http://.*/.* http://invalid2.yoctoproject.org/ \n http://invalid2.yoctoproject.org/.* http://downloads.yoctoproject.org/releases/bitbake")
+            fetcher = bb.fetch.Fetch(["http://invalid.yoctoproject.org/releases/bitbake/bitbake-1.0.tar.gz"], self.d)
+            fetcher.download()
+            self.assertEqual(os.path.getsize(self.dldir + "/bitbake-1.0.tar.gz"), 57749)
+
+        def test_fetch_file_mirror_of_mirror(self):
+            self.d.setVar("MIRRORS", "http://.*/.* file:///some1where/ \n file:///some1where/.* file://some2where/ \n file://some2where/.* http://downloads.yoctoproject.org/releases/bitbake")
+            fetcher = bb.fetch.Fetch(["http://invalid.yoctoproject.org/releases/bitbake/bitbake-1.0.tar.gz"], self.d)
+            os.mkdir(self.dldir + "/some2where")
+            fetcher.download()
+            self.assertEqual(os.path.getsize(self.dldir + "/bitbake-1.0.tar.gz"), 57749)
+
         def test_fetch_premirror(self):
             self.d.setVar("PREMIRRORS", "http://.*/.* http://downloads.yoctoproject.org/releases/bitbake")
             fetcher = bb.fetch.Fetch(["http://invalid.yoctoproject.org/releases/bitbake/bitbake-1.0.tar.gz"], self.d)
@@ -547,6 +584,43 @@ class FetcherNetworkTest(FetcherTest):
             os.chdir(os.path.dirname(self.unpackdir))
             fetcher.unpack(self.unpackdir)
 
+        def test_trusted_network(self):
+            # Ensure trusted_network returns False when the host IS in the list.
+            url = "git://Someserver.org/foo;rev=1"
+            self.d.setVar("BB_ALLOWED_NETWORKS", "server1.org someserver.org server2.org server3.org")
+            self.assertTrue(bb.fetch.trusted_network(self.d, url))
+
+        def test_wild_trusted_network(self):
+            # Ensure trusted_network returns true when the *.host IS in the list.
+            url = "git://Someserver.org/foo;rev=1"
+            self.d.setVar("BB_ALLOWED_NETWORKS", "server1.org *.someserver.org server2.org server3.org")
+            self.assertTrue(bb.fetch.trusted_network(self.d, url))
+
+        def test_prefix_wild_trusted_network(self):
+            # Ensure trusted_network returns true when the prefix matches *.host.
+            url = "git://git.Someserver.org/foo;rev=1"
+            self.d.setVar("BB_ALLOWED_NETWORKS", "server1.org *.someserver.org server2.org server3.org")
+            self.assertTrue(bb.fetch.trusted_network(self.d, url))
+
+        def test_two_prefix_wild_trusted_network(self):
+            # Ensure trusted_network returns true when the prefix matches *.host.
+            url = "git://something.git.Someserver.org/foo;rev=1"
+            self.d.setVar("BB_ALLOWED_NETWORKS", "server1.org *.someserver.org server2.org server3.org")
+            self.assertTrue(bb.fetch.trusted_network(self.d, url))
+
+        def test_untrusted_network(self):
+            # Ensure trusted_network returns False when the host is NOT in the list.
+            url = "git://someserver.org/foo;rev=1"
+            self.d.setVar("BB_ALLOWED_NETWORKS", "server1.org server2.org server3.org")
+            self.assertFalse(bb.fetch.trusted_network(self.d, url))
+
+        def test_wild_untrusted_network(self):
+            # Ensure trusted_network returns False when the host is NOT in the list.
+            url = "git://*.someserver.org/foo;rev=1"
+            self.d.setVar("BB_ALLOWED_NETWORKS", "server1.org server2.org server3.org")
+            self.assertFalse(bb.fetch.trusted_network(self.d, url))
+
+
 class URLHandle(unittest.TestCase):
 
     datatable = {
@@ -566,7 +640,7 @@ class URLHandle(unittest.TestCase):
             result = bb.fetch.encodeurl(v)
             self.assertEqual(result, k)
 
-class FetchMethodTest(FetcherTest):
+class FetchLatestVersionTest(FetcherTest):
 
     test_git_uris = {
         # version pattern "X.Y.Z"
@@ -589,7 +663,7 @@ class FetchMethodTest(FetcherTest):
         # version pattern "yyyymmdd"
         ("mobile-broadband-provider-info", "git://git.gnome.org/mobile-broadband-provider-info", "4ed19e11c2975105b71b956440acdb25d46a347d", "")
             : "20120614",
-        # packages with a valid GITTAGREGEX
+        # packages with a valid UPSTREAM_CHECK_GITTAGREGEX
         ("xf86-video-omap", "git://anongit.freedesktop.org/xorg/driver/xf86-video-omap", "ae0394e687f1a77e966cf72f895da91840dffb8f", "(?P<pver>(\d+\.(\d\.?)*))")
             : "0.4.3",
         ("build-appliance-image", "git://git.yoctoproject.org/poky", "b37dd451a52622d5b570183a81583cc34c2ff555", "(?P<pver>(([0-9][\.|_]?)+[0-9]))")
@@ -618,7 +692,7 @@ class FetchMethodTest(FetcherTest):
             : "5.0",
         ("xserver-xorg", "http://xorg.freedesktop.org/releases/individual/xserver/xorg-server-1.15.1.tar.bz2", "", "")
             : "1.15.1",
-        # packages with valid REGEX_URI and REGEX
+        # packages with valid UPSTREAM_CHECK_URI and UPSTREAM_CHECK_REGEX
         ("cups", "http://www.cups.org/software/1.7.2/cups-1.7.2-source.tar.bz2", "http://www.cups.org/software.php", "(?P<name>cups\-)(?P<pver>((\d+[\.\-_]*)+))\-source\.tar\.gz")
             : "2.0.0",
         ("db", "http://download.oracle.com/berkeley-db/db-5.3.21.tar.gz", "http://www.oracle.com/technetwork/products/berkeleydb/downloads/index-082944.html", "http://download.oracle.com/otn/berkeley-db/(?P<name>db-)(?P<pver>((\d+[\.\-_]*)+))\.tar\.gz")
@@ -631,18 +705,67 @@ class FetchMethodTest(FetcherTest):
             for k, v in self.test_git_uris.items():
                 self.d.setVar("PN", k[0])
                 self.d.setVar("SRCREV", k[2])
-                self.d.setVar("GITTAGREGEX", k[3])
+                self.d.setVar("UPSTREAM_CHECK_GITTAGREGEX", k[3])
                 ud = bb.fetch2.FetchData(k[1], self.d)
-                verstring = ud.method.latest_versionstring(ud, self.d)
+                pupver= ud.method.latest_versionstring(ud, self.d)
+                verstring = pupver[0]
                 r = bb.utils.vercmp_string(v, verstring)
                 self.assertTrue(r == -1 or r == 0, msg="Package %s, version: %s <= %s" % (k[0], v, verstring))
 
         def test_wget_latest_versionstring(self):
             for k, v in self.test_wget_uris.items():
                 self.d.setVar("PN", k[0])
-                self.d.setVar("REGEX_URI", k[2])
-                self.d.setVar("REGEX", k[3])
+                self.d.setVar("UPSTREAM_CHECK_URI", k[2])
+                self.d.setVar("UPSTREAM_CHECK_REGEX", k[3])
                 ud = bb.fetch2.FetchData(k[1], self.d)
-                verstring = ud.method.latest_versionstring(ud, self.d)
+                pupver = ud.method.latest_versionstring(ud, self.d)
+                verstring = pupver[0]
                 r = bb.utils.vercmp_string(v, verstring)
                 self.assertTrue(r == -1 or r == 0, msg="Package %s, version: %s <= %s" % (k[0], v, verstring))
+
+
+class FetchCheckStatusTest(FetcherTest):
+    test_wget_uris = ["http://www.cups.org/software/1.7.2/cups-1.7.2-source.tar.bz2",
+                      "http://www.cups.org/software/ipptool/ipptool-20130731-linux-ubuntu-i686.tar.gz",
+                      "http://www.cups.org/",
+                      "http://downloads.yoctoproject.org/releases/sato/sato-engine-0.1.tar.gz",
+                      "http://downloads.yoctoproject.org/releases/sato/sato-engine-0.2.tar.gz",
+                      "http://downloads.yoctoproject.org/releases/sato/sato-engine-0.3.tar.gz",
+                      "https://yoctoproject.org/",
+                      "https://yoctoproject.org/documentation",
+                      "http://downloads.yoctoproject.org/releases/opkg/opkg-0.1.7.tar.gz",
+                      "http://downloads.yoctoproject.org/releases/opkg/opkg-0.3.0.tar.gz",
+                      "ftp://ftp.gnu.org/gnu/autoconf/autoconf-2.60.tar.gz",
+                      "ftp://ftp.gnu.org/gnu/chess/gnuchess-5.08.tar.gz",
+                      "ftp://ftp.gnu.org/gnu/gmp/gmp-4.0.tar.gz",
+                      # GitHub releases are hosted on Amazon S3, which doesn't support HEAD
+                      "https://github.com/kergoth/tslib/releases/download/1.1/tslib-1.1.tar.xz"
+                      ]
+
+    if os.environ.get("BB_SKIP_NETTESTS") == "yes":
+        print("Unset BB_SKIP_NETTESTS to run network tests")
+    else:
+
+        def test_wget_checkstatus(self):
+            fetch = bb.fetch2.Fetch(self.test_wget_uris, self.d)
+            for u in self.test_wget_uris:
+                ud = fetch.ud[u]
+                m = ud.method
+                ret = m.checkstatus(fetch, ud, self.d)
+                self.assertTrue(ret, msg="URI %s, can't check status" % (u))
+
+
+        def test_wget_checkstatus_connection_cache(self):
+            from bb.fetch2 import FetchConnectionCache
+
+            connection_cache = FetchConnectionCache()
+            fetch = bb.fetch2.Fetch(self.test_wget_uris, self.d,
+                        connection_cache = connection_cache)
+
+            for u in self.test_wget_uris:
+                ud = fetch.ud[u]
+                m = ud.method
+                ret = m.checkstatus(fetch, ud, self.d)
+                self.assertTrue(ret, msg="URI %s, can't check status" % (u))
+
+            connection_cache.close_connections()

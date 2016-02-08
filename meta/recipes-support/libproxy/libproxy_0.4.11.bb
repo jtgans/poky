@@ -8,11 +8,11 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=4fbd65380cdd255951079008b364516c \
 
 DEPENDS = "gconf glib-2.0"
 
-SRC_URI = "http://libproxy.googlecode.com/files/libproxy-${PV}.zip \
+SRC_URI = "${DEBIAN_MIRROR}/main/libp/${BPN}/${BPN}_${PV}.orig.tar.gz \
+           file://0001-test-Include-sys-select.h-for-select.patch \
           "
-
-SRC_URI[md5sum] = "06be230b8b612e64997f8f15af6373aa"
-SRC_URI[sha256sum] = "3175abcb49c0b37fd82c697927783bf7d53de3884a8559bc594e59caa09bdb04"
+SRC_URI[md5sum] = "3cd1ae2a4abecf44b3f24d6639d2cd84"
+SRC_URI[sha256sum] = "dc3f33de54163718f82b3e7c496a7de97f8862578414b8ecaad3cbfe4821864b"
 
 inherit cmake pkgconfig
 
@@ -21,7 +21,6 @@ EXTRA_OECMAKE = "-DWITH_WEBKIT=no -DWITH_GNOME=yes -DWITH_KDE4=no \
 
 FILES_${PN} += "${libdir}/${BPN}/${PV}/modules"
 FILES_${PN}-dev += "${datadir}/cmake"
-FILES_${PN}-dbg += "${libdir}/${BPN}/${PV}/plugins/.debug/ ${libdir}/${BPN}/${PV}/modules/.debug/"
 
 do_configure_prepend() {
 	export HOST_SYS=${HOST_SYS}
@@ -30,6 +29,6 @@ do_configure_prepend() {
 
 python() {
     if incompatible_license_contains("GPLv3", "x", "", d) == "x" or bb.utils.contains("DISTRO_FEATURES", "x11", "x", "", d) == "":
-        d.setVar("EXTRA_OECMAKE", d.getVar("EXTRA_OECMAKE").replace("-DWITH_GNOME=yes", "-DWITH_GNOME=no"))
-        d.setVar("DEPENDS", " ".join(i for i in d.getVar("DEPENDS").split() if i != "gconf"))
+        d.setVar("EXTRA_OECMAKE", d.getVar("EXTRA_OECMAKE", False).replace("-DWITH_GNOME=yes", "-DWITH_GNOME=no"))
+        d.setVar("DEPENDS", " ".join(i for i in d.getVar("DEPENDS", False).split() if i != "gconf"))
 }

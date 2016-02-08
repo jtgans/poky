@@ -1,27 +1,25 @@
-Upstream-Status: Submitted [https://bugzilla.gnome.org/show_bug.cgi?id=712693]
-Signed-off-by: Ross Burton <ross.burton@intel.com>
-
-From 18917f7fd3160afe06019f4b6234aeb78a3fdb4e Mon Sep 17 00:00:00 2001
-From: Ross Burton <ross.burton@intel.com>
-Date: Tue, 19 Nov 2013 16:00:29 +0000
+From 4e0ce3f22d45033a108cbacca3e5ec6728bd44f3 Mon Sep 17 00:00:00 2001
+From: Jussi Kukkonen <jussi.kukkonen@intel.com>
+Date: Tue, 11 Aug 2015 16:25:38 +0300
 Subject: [PATCH] configure: add option to enable/disable use of GTK+
 
 Distro packagers like predictability and automatically detected optional
 dependencies are not predicable.  Add a --with-gtk3 option (default to "auto")
 for forcibly controlling whether GTK+ will be used or not.
 
-Signed-off-by: Ross Burton <ross.burton@intel.com>
+Upstream-Status: Submitted [https://bugzilla.gnome.org/show_bug.cgi?id=712693]
 
-https://bugzilla.gnome.org/show_bug.cgi?id=712693
+Signed-off-by: Ross Burton <ross.burton@intel.com>
+Signed-off-by: Jussi Kukkonen <jussi.kukkonen@intel.com>
 ---
- configure.in |   17 +++++++++++------
+ configure.ac | 17 +++++++++++------
  1 file changed, 11 insertions(+), 6 deletions(-)
 
-diff --git a/configure.in b/configure.in
-index f7a89dc..1498f72 100644
---- a/configure.in
-+++ b/configure.in
-@@ -119,17 +119,22 @@ AC_CHECK_FUNCS(strtok_r)
+diff --git a/configure.ac b/configure.ac
+index e61a952..c3aae84 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -130,17 +130,22 @@ AC_CHECK_FUNCS(strtok_r)
  # GTK
  # ===========================================================================
  
@@ -49,14 +47,14 @@ index f7a89dc..1498f72 100644
  
  dnl ===========================================================================
  dnl GDK-Pixbuf SVG loader
-@@ -305,6 +310,6 @@ librsvg-$VERSION
+@@ -298,6 +303,6 @@ librsvg-$VERSION
  	Build introspectable bindings:  ${found_introspection}
  	Build Vala bindings:            ${enable_vala}
  	Build GdkPixbuf loader:         ${enable_pixbuf_loader}
--        GTK 3.0:                        ${have_gtk_3}
-+        GTK 3.0:                        ${with_gtk3}
- 	Build miscellaenous tools:      ${build_misc_tools}
+-        GTK+ $GTK3_REQUIRED or later:           ${have_gtk_3}
++        GTK+ $GTK3_REQUIRED or later:           ${with_gtk_3}
+ 	Build miscellaneous tools:      ${build_misc_tools}
  "
 -- 
-1.7.10.4
+2.1.4
 

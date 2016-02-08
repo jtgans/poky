@@ -99,6 +99,60 @@
         </para>
     </section>
 
+    <section id='ref-tasks-image'>
+        <title><filename>do_image</filename></title>
+
+        <para>
+            Starts the image generation process.
+            The <filename>do_image</filename> task runs after the
+            OpenEmbedded build system has run the
+            <link linkend='ref-tasks-rootfs'><filename>do_rootfs</filename></link>
+            task during which packages are identified for installation into
+            the image and the root filesystem is created, complete with
+            post-processing.
+        </para>
+
+        <para>
+            The <filename>do_image</filename> task performs pre-processing
+            on the image through the
+            <link linkend='var-IMAGE_PREPROCESS_COMMAND'><filename>IMAGE_PREPROCESS_COMMAND</filename></link>
+            and dynamically generates supporting
+            <filename>do_image_*</filename> tasks as needed.
+        </para>
+
+        <para>
+            For more information on image creation, see the
+            "<link linkend='image-generation-dev-environment'>Image Generation</link>"
+            section.
+        </para>
+    </section>
+
+    <section id='ref-tasks-image-complete'>
+        <title><filename>do_image_complete</filename></title>
+
+        <para>
+            Completes the image generation process.
+            The <filename>do_image_complete</filename> task runs after the
+            OpenEmbedded build system has run the
+            <link linkend='ref-tasks-rootfs'><filename>do_image</filename></link>
+            task during which image pre-processing occurs and through
+            dynamically generated <filename>do_image_*</filename> tasks the
+            image is constructed.
+        </para>
+
+        <para>
+            The <filename>do_image_complete</filename> task performs
+            post-processing on the image through the
+            <link linkend='var-IMAGE_POSTPROCESS_COMMAND'><filename>IMAGE_POSTPROCESS_COMMAND</filename></link>.
+        </para>
+
+        <para>
+            For more information on image creation, see the
+            "<link linkend='image-generation-dev-environment'>Image Generation</link>"
+            section.
+        </para>
+    </section>
+
     <section id='ref-tasks-install'>
         <title><filename>do_install</filename></title>
 
@@ -144,9 +198,13 @@
         <title><filename>do_package_write_deb</filename></title>
 
         <para>
-            Creates the actual DEB packages and places them in the
-            <link linkend='package-feeds-dev-environment'>Package Feeds</link>
-            area.
+            Creates Debian packages (i.e. <filename>*.deb</filename> files) and
+            places them in the
+            <filename>${</filename><link linkend='var-DEPLOY_DIR_DEB'><filename>DEPLOY_DIR_DEB</filename></link><filename>}</filename>
+            directory in the package feeds area.
+            For more information, see the
+            "<link linkend='package-feeds-dev-environment'>Package Feeds</link>"
+            section.
         </para>
     </section>
 
@@ -154,9 +212,13 @@
         <title><filename>do_package_write_ipk</filename></title>
 
         <para>
-            Creates the actual IPK packages and places them in the
-            <link linkend='package-feeds-dev-environment'>Package Feeds</link>
-            area.
+            Creates IPK packages (i.e. <filename>*.ipk</filename> files) and
+            places them in the
+            <filename>${</filename><link linkend='var-DEPLOY_DIR_IPK'><filename>DEPLOY_DIR_IPK</filename></link><filename>}</filename>
+            directory in the package feeds area.
+            For more information, see the
+            "<link linkend='package-feeds-dev-environment'>Package Feeds</link>"
+            section.
         </para>
     </section>
 
@@ -164,9 +226,13 @@
         <title><filename>do_package_write_rpm</filename></title>
 
         <para>
-            Creates the actual RPM packages and places them in the
-            <link linkend='package-feeds-dev-environment'>Package Feeds</link>
-            area.
+            Creates RPM packages (i.e. <filename>*.rpm</filename> files) and
+            places them in the
+            <filename>${</filename><link linkend='var-DEPLOY_DIR_RPM'><filename>DEPLOY_DIR_RPM</filename></link><filename>}</filename>
+            directory in the package feeds area.
+            For more information, see the
+            "<link linkend='package-feeds-dev-environment'>Package Feeds</link>"
+            section.
         </para>
     </section>
 
@@ -174,9 +240,12 @@
         <title><filename>do_package_write_tar</filename></title>
 
         <para>
-            Creates tar archives for packages and places them in the
-            <link linkend='package-feeds-dev-environment'>Package Feeds</link>
-            area.
+            Creates tarballs and places them in the
+            <filename>${</filename><link linkend='var-DEPLOY_DIR_TAR'><filename>DEPLOY_DIR_TAR</filename></link><filename>}</filename>
+            directory in the package feeds area.
+            For more information, see the
+            "<link linkend='package-feeds-dev-environment'>Package Feeds</link>"
+            section.
         </para>
     </section>
 
@@ -604,6 +673,15 @@
         </para>
     </section>
 
+    <section id='ref-tasks-kernel_metadata'>
+        <title><filename>do_kernel_metadata</filename></title>
+
+        <para>
+            Collects kernel metadata for a
+            <filename>linux-yocto</filename> style kernel.
+        </para>
+    </section>
+
     <section id='ref-tasks-menuconfig'>
         <title><filename>do_menuconfig</filename></title>
 
@@ -620,6 +698,14 @@
 
         <para>
             Creates a minimal Linux kernel configuration file.
+        </para>
+    </section>
+
+    <section id='ref-tasks-shared_workdir'>
+        <title><filename>do_shared_workdir</filename></title>
+
+        <para>
+            Creates the shared working directory for the kernel.
         </para>
     </section>
 
@@ -667,15 +753,6 @@
     <para>
         The following sections describe miscellaneous tasks.
     </para>
-
-    <section id='ref-tasks-generate_qt_config_file'>
-        <title><filename>do_generate_qt_config_file</filename></title>
-
-        <para>
-            Writes a <filename>qt.conf</filename> configuration
-            file used for building a Qt-based application.
-        </para>
-    </section>
 
     <section id='ref-tasks-spdx'>
         <title><filename>do_spdx</filename></title>

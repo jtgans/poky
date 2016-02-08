@@ -16,7 +16,8 @@
 # with this program; if not, write to the Free Software Foundation, Inc., 59
 # Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
-import os,sys
+import os
+import sys
 import re
 import time
 
@@ -37,8 +38,8 @@ __ALL__ = ['set_mode',
 # COLORs in ANSI
 INFO_COLOR = 32 # green
 WARN_COLOR = 33 # yellow
-ERR_COLOR  = 31 # red
-ASK_COLOR  = 34 # blue
+ERR_COLOR = 31 # red
+ASK_COLOR = 34 # blue
 NO_COLOR = 0
 
 PREFIX_RE = re.compile('^<(.*?)>\s*(.*)', re.S)
@@ -47,12 +48,12 @@ INTERACTIVE = True
 
 LOG_LEVEL = 1
 LOG_LEVELS = {
-                'quiet': 0,
-                'normal': 1,
-                'verbose': 2,
-                'debug': 3,
-                'never': 4,
-             }
+    'quiet': 0,
+    'normal': 1,
+    'verbose': 2,
+    'debug': 3,
+    'never': 4,
+}
 
 LOG_FILE_FP = None
 LOG_CONTENT = ''
@@ -60,7 +61,7 @@ CATCHERR_BUFFILE_FD = -1
 CATCHERR_BUFFILE_PATH = None
 CATCHERR_SAVED_2 = -1
 
-def _general_print(head, color, msg = None, stream = None, level = 'normal'):
+def _general_print(head, color, msg=None, stream=None, level='normal'):
     global LOG_CONTENT
     if not stream:
         stream = sys.stdout
@@ -75,7 +76,7 @@ def _general_print(head, color, msg = None, stream = None, level = 'normal'):
 
     errormsg = ''
     if CATCHERR_BUFFILE_FD > 0:
-        size = os.lseek(CATCHERR_BUFFILE_FD , 0, os.SEEK_END)
+        size = os.lseek(CATCHERR_BUFFILE_FD, 0, os.SEEK_END)
         os.lseek(CATCHERR_BUFFILE_FD, 0, os.SEEK_SET)
         errormsg = os.read(CATCHERR_BUFFILE_FD, size)
         os.ftruncate(CATCHERR_BUFFILE_FD, 0)
@@ -130,7 +131,7 @@ def _color_print(head, color, msg, stream, level):
 
     stream.flush()
 
-def _color_perror(head, color, msg, level = 'normal'):
+def _color_perror(head, color, msg, level='normal'):
     if CATCHERR_BUFFILE_FD > 0:
         _general_print(head, color, msg, sys.stdout, level)
     else:
@@ -150,15 +151,15 @@ def _split_msg(head, msg):
         msg = msg.lstrip()
         head = '\r' + head
 
-    m = PREFIX_RE.match(msg)
-    if m:
-        head += ' <%s>' % m.group(1)
-        msg = m.group(2)
+    match = PREFIX_RE.match(msg)
+    if match:
+        head += ' <%s>' % match.group(1)
+        msg = match.group(2)
 
     return head, msg
 
 def get_loglevel():
-    return (k for k,v in LOG_LEVELS.items() if v==LOG_LEVEL).next()
+    return (k for k, v in LOG_LEVELS.items() if v == LOG_LEVEL).next()
 
 def set_loglevel(level):
     global LOG_LEVEL
@@ -190,7 +191,7 @@ def info(msg):
 
 def verbose(msg):
     head, msg = _split_msg('Verbose', msg)
-    _general_print(head, INFO_COLOR, msg, level = 'verbose')
+    _general_print(head, INFO_COLOR, msg, level='verbose')
 
 def warning(msg):
     head, msg = _split_msg('Warning', msg)
@@ -198,7 +199,7 @@ def warning(msg):
 
 def debug(msg):
     head, msg = _split_msg('Debug', msg)
-    _color_perror(head, ERR_COLOR, msg, level = 'debug')
+    _color_perror(head, ERR_COLOR, msg, level='debug')
 
 def error(msg):
     head, msg = _split_msg('Error', msg)
@@ -270,9 +271,8 @@ def set_logfile(fpath):
 
     def _savelogf():
         if LOG_FILE_FP:
-            fp = open(LOG_FILE_FP, 'w')
-            fp.write(LOG_CONTENT)
-            fp.close()
+            with open(LOG_FILE_FP, 'w') as log:
+                log.write(LOG_CONTENT)
 
     if LOG_FILE_FP is not None:
         warning('duplicate log file configuration')
@@ -299,7 +299,7 @@ def disable_logstderr():
     global CATCHERR_BUFFILE_PATH
     global CATCHERR_SAVED_2
 
-    raw(msg = None) # flush message buffer and print it.
+    raw(msg=None) # flush message buffer and print it.
     os.dup2(CATCHERR_SAVED_2, 2)
     os.close(CATCHERR_SAVED_2)
     os.close(CATCHERR_BUFFILE_FD)

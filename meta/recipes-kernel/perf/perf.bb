@@ -29,7 +29,7 @@ DEPENDS = " \
     ${TUI_DEPENDS} \
     ${SCRIPTING_DEPENDS} \
     ${LIBUNWIND_DEPENDS} \
-    bison flex \
+    bison flex xz \
 "
 
 do_configure[depends] += "virtual/kernel:do_shared_workdir"
@@ -44,6 +44,7 @@ export STAGING_INCDIR
 export STAGING_LIBDIR
 export BUILD_SYS
 export HOST_SYS
+export PYTHON_SITEPACKAGES_DIR
 
 #kernel 3.1+ supports WERROR to disable warnings as errors
 export WERROR = "0"
@@ -61,6 +62,7 @@ export PERL_ARCHLIB = "${STAGING_LIBDIR}${PERL_OWN_DIR}/perl/${@get_perl_version
 inherit kernelsrc
 
 B = "${WORKDIR}/${BPN}-${PV}"
+SPDX_S = "${S}/tools/perf"
 
 SCRIPTING_DEFINES = "${@perf_feature_enabled('perf-scripting', '', 'NO_LIBPERL=1 NO_LIBPYTHON=1',d)}"
 TUI_DEFINES = "${@perf_feature_enabled('perf-tui', '', 'NO_NEWT=1',d)}"
@@ -110,7 +112,7 @@ do_install() {
 	unset CFLAGS
 	oe_runmake DESTDIR=${D} install
 	# we are checking for this make target to be compatible with older perf versions
-	if [ "${@perf_feature_enabled('perf-scripting', 1, 0, d)}" = "1" -a $(grep install-python_ext ${S}/tools/perf/Makefile) = "0" ]; then
+	if [ "${@perf_feature_enabled('perf-scripting', 1, 0, d)}" = "1" ] && grep -q install-python_ext ${S}/tools/perf/Makefile*; then
 		oe_runmake DESTDIR=${D} install-python_ext
 	fi
 }
@@ -118,13 +120,7 @@ do_install() {
 do_configure_prepend () {
     # Fix for rebuilding
     rm -rf ${B}/
-    mkdir ${B}/
-
-    #kernels before 3.1 do not support WERROR env variable
-    sed -i 's,-Werror ,,' ${S}/tools/perf/Makefile
-    if [ -e "${S}/tools/perf/config/Makefile" ]; then
-        sed -i 's,-Werror ,,' ${S}/tools/perf/config/Makefile
-    fi
+    mkdir -p ${B}/
 
     # If building a multlib based perf, the incorrect library path will be
     # detected by perf, since it triggers via: ifeq ($(ARCH),x86_64). In a 32 bit
@@ -132,12 +128,33 @@ do_configure_prepend () {
     # 64 bit build (and library) are not exected. To ensure that libraries are
     # installed to the correct location, we can use the weak assignment in the
     # config/Makefile.
+    #
+    # Also need to relocate .config-detected to $(OUTPUT)/config-detected
+    # for kernel sources that do not already do this
+    # as two builds (e.g. perf and lib32-perf from mutlilib can conflict
+    # with each other if its in the shared source directory
+    #
     if [ -e "${S}/tools/perf/config/Makefile" ]; then
         # Match $(prefix)/$(lib) and $(prefix)/lib
         sed -i -e 's,^libdir = \($(prefix)/.*lib\),libdir ?= \1,' \
                -e 's,^perfexecdir = \(.*\),perfexecdir ?= \1,' \
+               -e 's,\ .config-detected, $(OUTPUT)/config-detected,g' \
             ${S}/tools/perf/config/Makefile
     fi
+    if [ -e "${S}/tools/perf/Makefile.perf" ]; then
+        sed -i -e 's,\ .config-detected, $(OUTPUT)/config-detected,g' \
+            ${S}/tools/perf/Makefile.perf
+        sed -i -e "s,prefix='\$(DESTDIR_SQ)/usr'$,prefix='\$(DESTDIR_SQ)/usr' --install-lib='\$(DESTDIR)\$(PYTHON_SITEPACKAGES_DIR)',g" \
+            ${S}/tools/perf/Makefile.perf
+    fi
+    sed -i -e "s,--root='/\$(DESTDIR_SQ)',--prefix='\$(DESTDIR_SQ)/usr' --install-lib='\$(DESTDIR)\$(PYTHON_SITEPACKAGES_DIR)',g" \
+        ${S}/tools/perf/Makefile*
+
+    if [ -e "${S}/tools/build/Makefile.build" ]; then
+        sed -i -e 's,\ .config-detected, $(OUTPUT)/config-detected,g' \
+            ${S}/tools/build/Makefile.build
+    fi
+
     # We need to ensure the --sysroot option in CC is preserved
     if [ -e "${S}/tools/perf/Makefile.perf" ]; then
         sed -i 's,CC = $(CROSS_COMPILE)gcc,#CC,' ${S}/tools/perf/Makefile.perf
@@ -149,6 +166,9 @@ do_configure_prepend () {
     fi
     if [ -e "${S}/tools/perf/config/feature-checks/Makefile" ]; then
         sed -i 's,CC := $(CROSS_COMPILE)gcc -MD,CC += -MD,' ${S}/tools/perf/config/feature-checks/Makefile
+    fi
+    if [ -e "${S}/tools/build/Makefile.feature" ]; then
+        sed -i 's,CFLAGS=,CC="\$(CC)" CFLAGS=,' ${S}/tools/build/Makefile.feature
     fi
 
     # 3.17-rc1+ has a include issue for arm/powerpc. Temporarily sed in the appropriate include
@@ -180,7 +200,6 @@ RSUGGESTS_SCRIPTING = "${@perf_feature_enabled('perf-scripting', '${PN}-perl ${P
 RSUGGESTS_${PN} += "${PN}-archive ${PN}-tests ${RSUGGESTS_SCRIPTING}"
 
 FILES_${PN} += "${libexecdir}/perf-core ${exec_prefix}/libexec/perf-core ${libdir}/traceevent"
-FILES_${PN}-dbg += "${libdir}/python*/site-packages/.debug"
 FILES_${PN}-archive = "${libdir}/perf/perf-core/perf-archive"
 FILES_${PN}-tests = "${libdir}/perf/perf-core/tests"
 FILES_${PN}-python = "${libdir}/python*/site-packages ${libdir}/perf/perf-core/scripts/python"

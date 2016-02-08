@@ -2,7 +2,9 @@ SUMMARY = "Graphics library for creating hardware-accelerated user interfaces"
 HOMEPAGE = "http://www.clutter-project.org/"
 LICENSE = "LGPLv2.1+"
 
-inherit clutter ptest-gnome
+inherit clutter ptest-gnome distro_features_check upstream-version-is-even
+# depends on cogl-1.0 which needs opengl
+REQUIRED_DISTRO_FEATURES ?= "opengl"
 
 DEPENDS = "pango glib-2.0 json-glib atk udev cogl-1.0"
 PACKAGE_BEFORE_PN += "${PN}-examples"
@@ -37,10 +39,7 @@ PACKAGECONFIG ??= "egl \
                    ${@bb.utils.contains('DISTRO_FEATURES', 'wayland', 'wayland', '', d)} \
                    ${@bb.utils.contains('DISTRO_FEATURES', 'x11', 'glx x11', '', d)}"
 
-FILES_${PN}-dbg += "${libdir}/clutter/examples/.debug"
 FILES_${PN}-examples = "${libdir}/clutter/examples"
-
-FILES_${PN}-dbg += "${libexecdir}/installed-tests/.debug"
 
 do_configure_prepend() {
 	# see https://bugzilla.gnome.org/show_bug.cgi?id=661128 for this

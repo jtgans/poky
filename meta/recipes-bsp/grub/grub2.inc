@@ -24,6 +24,11 @@ SRC_URI = "ftp://ftp.gnu.org/gnu/grub/grub-${PV}.tar.gz \
            file://grub-no-unused-result.patch \
            file://grub-efi-allow-a-compilation-without-mcmodel-large.patch \
            file://grub-efi-fix-with-glibc-2.20.patch \
+           file://0001-Unset-need_charset_alias-when-building-for-musl.patch \
+           file://0001-parse_dhcp_vendor-Add-missing-const-qualifiers.patch \
+           file://grub2-fix-initrd-size-bug.patch \
+           file://0001-Fix-CVE-2015-8370-Grub2-user-pass-vulnerability.patch \
+           file://0001-Remove-direct-_llseek-code-and-require-long-filesyst.patch \
             "
 
 DEPENDS = "flex-native bison-native xz"
@@ -34,6 +39,10 @@ SRC_URI[sha256sum] = "65b39a0558f8c802209c574f4d02ca263a804e8a564bc6caf1cd0fd3b3
 COMPATIBLE_HOST = '(x86_64.*|i.86.*)-(linux|freebsd.*)'
 
 inherit autotools gettext texinfo
+
+PACKAGECONFIG ??= ""
+PACKAGECONFIG[grub-mount] = "--enable-grub-mount,--disable-grub-mount,fuse"
+PACKAGECONFIG[device-mapper] = "--enable-device-mapper,--disable-device-mapper,lvm2"
 
 # grub and grub-efi's sysroot/${datadir}/grub/grub-mkconfig_lib are
 # conflicted, remove it since no one uses it.

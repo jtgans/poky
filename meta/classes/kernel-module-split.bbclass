@@ -148,7 +148,7 @@ python split_kernel_module_packages () {
             postinst = d.getVar('pkg_postinst_%s' % pkg, True)
             if not postinst:
                 bb.fatal("pkg_postinst_%s not defined" % pkg)
-            postinst += d.getVar('autoload_postinst_fragment', True) % autoload
+            postinst += d.getVar('autoload_postinst_fragment', True) % (autoload or basename)
             d.setVar('pkg_postinst_%s' % pkg, postinst)
 
         # Write out any modconf fragment
@@ -175,6 +175,9 @@ python split_kernel_module_packages () {
             if not dep in rdepends:
                 rdepends[dep] = []
         d.setVar('RDEPENDS_' + pkg, bb.utils.join_deps(rdepends, commasep=False))
+
+        # Avoid automatic -dev recommendations for modules ending with -dev.
+        d.setVarFlag('RRECOMMENDS_' + pkg, 'nodeprrecs', 1)
 
     module_deps = parse_depmod()
     module_regex = '^(.*)\.k?o$'

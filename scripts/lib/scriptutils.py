@@ -19,6 +19,7 @@ import sys
 import os
 import logging
 import glob
+import argparse
 
 def logger_create(name):
     logger = logging.getLogger(name)
@@ -57,4 +58,46 @@ def load_plugins(logger, plugins, pluginpath):
             plugin = load_plugin(name)
             if hasattr(plugin, 'plugin_init'):
                 plugin.plugin_init(plugins)
-                plugins.append(plugin)
+            plugins.append(plugin)
+
+def git_convert_standalone_clone(repodir):
+    """If specified directory is a git repository, ensure it's a standalone clone"""
+    import bb.process
+    if os.path.exists(os.path.join(repodir, '.git')):
+        alternatesfile = os.path.join(repodir, '.git', 'objects', 'info', 'alternates')
+        if os.path.exists(alternatesfile):
+            # This will have been cloned with -s, so we need to convert it so none
+            # of the contents is shared
+            bb.process.run('git repack -a', cwd=repodir)
+            os.remove(alternatesfile)
+
+def fetch_uri(d, uri, destdir, srcrev=None):
+    """Fetch a URI to a local directory"""
+    import bb.data
+    bb.utils.mkdirhier(destdir)
+    localdata = bb.data.createCopy(d)
+    localdata.setVar('BB_STRICT_CHECKSUM', '')
+    localdata.setVar('SRCREV', srcrev)
+    ret = (None, None)
+    olddir = os.getcwd()
+    try:
+        fetcher = bb.fetch2.Fetch([uri], localdata)
+        for u in fetcher.ud:
+            ud = fetcher.ud[u]
+            ud.ignore_checksums = True
+        fetcher.download()
+        for u in fetcher.ud:
+            ud = fetcher.ud[u]
+            if ud.localpath.rstrip(os.sep) == localdata.getVar('DL_DIR', True).rstrip(os.sep):
+                raise Exception('Local path is download directory - please check that the URI "%s" is correct' % uri)
+        fetcher.unpack(destdir)
+        for u in fetcher.ud:
+            ud = fetcher.ud[u]
+            if ud.method.recommends_checksum(ud):
+                md5value = bb.utils.md5_file(ud.localpath)
+                sha256value = bb.utils.sha256_file(ud.localpath)
+                ret = (md5value, sha256value)
+    finally:
+        os.chdir(olddir)
+    return ret
+

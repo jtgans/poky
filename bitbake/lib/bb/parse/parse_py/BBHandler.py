@@ -32,7 +32,7 @@ import bb.build, bb.utils
 from bb import data
 
 from . import ConfHandler
-from .. import resolve_file, ast, logger
+from .. import resolve_file, ast, logger, ParseError
 from .ConfHandler import include, init
 
 # For compatibility
@@ -47,37 +47,26 @@ __addhandler_regexp__    = re.compile( r"addhandler\s+(.+)" )
 __def_regexp__           = re.compile( r"def\s+(\w+).*:" )
 __python_func_regexp__   = re.compile( r"(\s+.*)|(^$)" )
 
-
-__infunc__ = ""
+__infunc__ = []
 __inpython__ = False
 __body__   = []
 __classname__ = ""
 
 cached_statements = {}
 
-# We need to indicate EOF to the feeder. This code is so messy that
-# factoring it out to a close_parse_file method is out of question.
-# We will use the IN_PYTHON_EOF as an indicator to just close the method
-#
-# The two parts using it are tightly integrated anyway
-IN_PYTHON_EOF = -9999999999999
-
-
-
 def supports(fn, d):
     """Return True if fn has a supported extension"""
     return os.path.splitext(fn)[-1] in [".bb", ".bbclass", ".inc"]
 
 def inherit(files, fn, lineno, d):
-    __inherit_cache = d.getVar('__inherit_cache') or []
+    __inherit_cache = d.getVar('__inherit_cache', False) or []
     files = d.expand(files).split()
     for file in files:
         if not os.path.isabs(file) and not file.endswith(".bbclass"):
             file = os.path.join('classes', '%s.bbclass' % file)
 
         if not os.path.isabs(file):
-            dname = os.path.dirname(fn)
-            bbpath = "%s:%s" % (dname, d.getVar("BBPATH", True))
+            bbpath = d.getVar("BBPATH", True)
             abs_fn, attempts = bb.utils.which(bbpath, file, history=True)
             for af in attempts:
                 if af != abs_fn:
@@ -90,7 +79,7 @@ def inherit(files, fn, lineno, d):
             __inherit_cache.append( file )
             d.setVar('__inherit_cache', __inherit_cache)
             include(fn, file, lineno, d, "inherit")
-            __inherit_cache = d.getVar('__inherit_cache') or []
+            __inherit_cache = d.getVar('__inherit_cache', False) or []
 
 def get_statements(filename, absolute_filename, base_name):
     global cached_statements
@@ -111,7 +100,7 @@ def get_statements(filename, absolute_filename, base_name):
         file.close()
         if __inpython__:
             # add a blank line to close out any python definition
-            feeder(IN_PYTHON_EOF, "", filename, base_name, statements)
+            feeder(lineno, "", filename, base_name, statements, eof=True)
 
         if filename.endswith(".bbclass") or filename.endswith(".inc"):
             cached_statements[absolute_filename] = statements
@@ -120,7 +109,7 @@ def get_statements(filename, absolute_filename, base_name):
 def handle(fn, d, include):
     global __func_start_regexp__, __inherit_regexp__, __export_func_regexp__, __addtask_regexp__, __addhandler_regexp__, __infunc__, __body__, __residue__, __classname__
     __body__ = []
-    __infunc__ = ""
+    __infunc__ = []
     __classname__ = ""
     __residue__ = []
 
@@ -130,13 +119,13 @@ def handle(fn, d, include):
 
     if ext == ".bbclass":
         __classname__ = root
-        __inherit_cache = d.getVar('__inherit_cache') or []
+        __inherit_cache = d.getVar('__inherit_cache', False) or []
         if not fn in __inherit_cache:
             __inherit_cache.append(fn)
             d.setVar('__inherit_cache', __inherit_cache)
 
     if include != 0:
-        oldfile = d.getVar('FILE')
+        oldfile = d.getVar('FILE', False)
     else:
         oldfile = None
 
@@ -149,7 +138,7 @@ def handle(fn, d, include):
     statements = get_statements(fn, abs_fn, base_name)
 
     # DONE WITH PARSING... time to evaluate
-    if ext != ".bbclass":
+    if ext != ".bbclass" and abs_fn != oldfile:
         d.setVar('FILE', abs_fn)
 
     try:
@@ -159,21 +148,26 @@ def handle(fn, d, include):
         if include == 0:
             return { "" : d }
 
+    if __infunc__:
+        raise ParseError("Shell function %s is never closed" % __infunc__[0], __infunc__[1], __infunc__[2])
+    if __residue__:
+        raise ParseError("Leftover unparsed (incomplete?) data %s from %s" % __residue__, fn)
+
     if ext != ".bbclass" and include == 0:
         return ast.multi_finalize(fn, d)
 
-    if oldfile:
+    if ext != ".bbclass" and oldfile and abs_fn != oldfile:
         d.setVar("FILE", oldfile)
 
     return d
 
-def feeder(lineno, s, fn, root, statements):
+def feeder(lineno, s, fn, root, statements, eof=False):
     global __func_start_regexp__, __inherit_regexp__, __export_func_regexp__, __addtask_regexp__, __addhandler_regexp__, __def_regexp__, __python_func_regexp__, __inpython__, __infunc__, __body__, bb, __residue__, __classname__
     if __infunc__:
         if s == '}':
             __body__.append('')
-            ast.handleMethod(statements, fn, lineno, __infunc__, __body__)
-            __infunc__ = ""
+            ast.handleMethod(statements, fn, lineno, __infunc__[0], __body__)
+            __infunc__ = []
             __body__ = []
         else:
             __body__.append(s)
@@ -181,7 +175,7 @@ def feeder(lineno, s, fn, root, statements):
 
     if __inpython__:
         m = __python_func_regexp__.match(s)
-        if m and lineno != IN_PYTHON_EOF:
+        if m and not eof:
             __body__.append(s)
             return
         else:
@@ -190,7 +184,7 @@ def feeder(lineno, s, fn, root, statements):
             __body__ = []
             __inpython__ = False
 
-            if lineno == IN_PYTHON_EOF:
+            if eof:
                 return
 
     if s and s[0] == '#':
@@ -217,8 +211,8 @@ def feeder(lineno, s, fn, root, statements):
 
     m = __func_start_regexp__.match(s)
     if m:
-        __infunc__ = m.group("func") or "__anonymous"
-        ast.handleMethodFlags(statements, fn, lineno, __infunc__, m)
+        __infunc__ = [m.group("func") or "__anonymous", fn, lineno]
+        ast.handleMethodFlags(statements, fn, lineno, __infunc__[0], m)
         return
 
     m = __def_regexp__.match(s)

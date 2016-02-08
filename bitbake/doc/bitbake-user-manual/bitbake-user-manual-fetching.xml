@@ -157,8 +157,8 @@
             <filename>SRC_URI</filename> variable with the appropriate
             varflags as follows:
             <literallayout class='monospaced'>
-     SRC_URI[md5sum] = "value"
-     SRC_URI[sha256sum] = "value"
+     SRC_URI[md5sum] = "<replaceable>value</replaceable>"
+     SRC_URI[sha256sum] = "<replaceable>value</replaceable>"
             </literallayout>
             You can also specify the checksums as parameters on the
             <filename>SRC_URI</filename> as shown below:
@@ -325,6 +325,25 @@
      SRC_URI = "ftp://you@oe.handhelds.org/home/you/secret.plan"
                 </literallayout>
             </para>
+            <note>
+               Because URL parameters are delimited by semi-colons, this can
+               introduce ambiguity when parsing URLs that also contain semi-colons,
+               for example:
+                <literallayout class='monospaced'>
+     SRC_URI = "http://abc123.org/git/?p=gcc/gcc.git;a=snapshot;h=a5dd47"
+                </literallayout>
+               Such URLs should should be modified by replacing semi-colons with '&amp;' characters:
+               <literallayout class='monospaced'>
+     SRC_URI = "http://abc123.org/git/?p=gcc/gcc.git&amp;a=snapshot&amp;h=a5dd47"
+                </literallayout>
+                In most cases this should work. Treating semi-colons and '&amp;' in queries
+                identically is recommended by the World Wide Web Consortium (W3C).
+                Note that due to the nature of the URL, you may have to specify the name
+                of the downloaded file as well:
+              <literallayout class='monospaced'>
+     SRC_URI = "http://abc123.org/git/?p=gcc/gcc.git&amp;a=snapshot&amp;h=a5dd47;downloadfilename=myfile.bz2"
+                </literallayout>
+            </note>
         </section>
 
         <section id='cvs-fetcher'>
@@ -628,7 +647,7 @@
                 <literallayout class='monospaced'>
      SRC_URI = "ccrc://cc.example.org/ccrc;vob=/example_vob;module=/example_module"
      SRCREV = "EXAMPLE_CLEARCASE_TAG"
-     PV = "${@d.getVar("SRCREV").replace("/", "+")}"
+     PV = "${@d.getVar("SRCREV", False).replace("/", "+")}"
                 </literallayout>
                 The fetcher uses the <filename>rcleartool</filename> or
                 <filename>cleartool</filename> remote client, depending on
@@ -646,13 +665,19 @@
                         </para></listitem>
                     <listitem><para><emphasis><filename>module</filename></emphasis>:
                         The module, which must include the
-                        prepending "/" character, in the selected VOB
-                        The <filename>module</filename> and <filename>vob</filename>
-                        options are combined to create the following load rule in
-                        the view config spec:
-                        <literallayout class='monospaced'>
-     load &lt;vob&gt;&lt;module&gt;
-                        </literallayout>
+                        prepending "/" character, in the selected VOB.
+                        <note>
+                            The <filename>module</filename> and <filename>vob</filename>
+                            options are combined to create the <filename>load</filename> rule in
+                            the view config spec.
+                            As an example, consider the <filename>vob</filename> and 
+                            <filename>module</filename> values from the 
+                            <filename>SRC_URI</filename> statement at the start of this section.
+                            Combining those values results in the following:
+                            <literallayout class='monospaced'>
+     load /example_vob/example_module
+                            </literallayout>
+                        </note>
                         </para></listitem>
                     <listitem><para><emphasis><filename>proto</filename></emphasis>:
                         The protocol, which can be either <filename>http</filename> or

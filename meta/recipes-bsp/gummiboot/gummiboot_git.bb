@@ -9,10 +9,11 @@ DEPENDS = "gnu-efi util-linux"
 inherit autotools pkgconfig
 inherit deploy
 
-PV = "43+git${SRCPV}"
-SRCREV = "4062c51075ba054d4949c714fe06123f9ad3097d"
+PV = "48+git${SRCPV}"
+SRCREV = "2bcd919c681c952eb867ef1bdb458f1bc49c2d55"
 SRC_URI = "git://anongit.freedesktop.org/gummiboot \
            file://fix-objcopy.patch \
+           file://0001-console-Fix-C-syntax-errors-for-function-declaration.patch \
           "
 
 # Note: Add COMPATIBLE_HOST here is only because it depends on gnu-efi
@@ -27,6 +28,8 @@ EXTRA_OECONF = "--disable-manpages --with-efi-includedir=${STAGING_INCDIR} \
                 --with-efi-libdir=${STAGING_LIBDIR}"
 
 EXTRA_OEMAKE += "gummibootlibdir=${libdir}/gummiboot"
+
+TUNE_CCARGS_remove = "-mfpmath=sse"
 
 do_deploy () {
         install ${B}/gummiboot*.efi ${DEPLOYDIR}

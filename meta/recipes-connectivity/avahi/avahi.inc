@@ -27,6 +27,7 @@ SRC_URI = "http://avahi.org/download/avahi-${PV}.tar.gz \
           file://out-of-tree.patch \
           file://0001-avahi-fix-avahi-status-command-error-prompt.patch \
           file://reuseport-check.patch \
+          file://0001-Don-t-log-warnings-about-invalid-packets-Fixes-lathi.patch \
           "
 
 USERADD_PACKAGES = "avahi-daemon avahi-autoipd"
@@ -75,7 +76,7 @@ PACKAGES =+ "avahi-daemon libavahi-common libavahi-core libavahi-client avahi-dn
 
 # As avahi doesn't put any files into PN, clear the files list to avoid problems
 # if extra libraries appear.
-FILES_avahi = ""
+FILES_${PN} = ""
 FILES_avahi-autoipd = "${sbindir}/avahi-autoipd \
                        ${sysconfdir}/avahi/avahi-autoipd.action \
                        ${sysconfdir}/dhcp/*/avahi-autoipd \

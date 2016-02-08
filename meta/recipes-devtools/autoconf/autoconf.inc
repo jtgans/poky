@@ -20,6 +20,7 @@ RDEPENDS_${PN} = "m4 gnu-config \
 		  perl-module-file-glob \
 		  perl-module-file-path \
 		  perl-module-file-stat \
+		  perl-module-file-find \
 		  perl-module-getopt-long \
 		  perl-module-io-file \
 		  perl-module-posix \
@@ -32,20 +33,12 @@ SRC_URI = "${GNU_MIRROR}/autoconf/autoconf-${PV}.tar.gz \
 
 inherit autotools texinfo
 
+CACHED_CONFIGUREVARS += "ac_cv_path_PERL=${USRBINPATH}/perl"
+
 do_configure() {
 	oe_runconf
 }
 
 do_install_append() {
     rm -rf ${D}${datadir}/emacs
-
-    # Some distros have both /bin/perl and /usr/bin/perl, but we set perl location
-    # for target as /usr/bin/perl, so fix it to /usr/bin/perl.
-    for i in autoheader autom4te autoreconf autoscan autoupdate ifnames; do
-        if [ -f ${D}${bindir}/$i ]; then
-            sed -i -e '1s,#!.*perl,#! ${USRBINPATH}/perl,' \
-            -e 's,exec .*/bin/perl \(.*\) exec .*/bin/perl \(.*\),exec ${USRBINPATH}/perl \1 exec ${USRBINPATH}/perl \2,' \
-            ${D}${bindir}/$i
-        fi
-    done
-} 
+}

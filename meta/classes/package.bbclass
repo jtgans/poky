@@ -39,7 +39,6 @@
 #    packaging steps
 
 inherit packagedata
-inherit prserv
 inherit chrpath
 
 # Need the package_qa_handle_error() in insane.bbclass
@@ -122,6 +121,8 @@ def do_split_packages(d, root, file_regex, output_pattern, description, postinst
     """
 
     dvar = d.getVar('PKGD', True)
+    root = d.expand(root)
+    output_pattern = d.expand(output_pattern)
 
     # If the root directory doesn't exist, don't error out later but silently do
     # no splitting.
@@ -425,10 +426,10 @@ def get_package_mapping (pkg, basepkg, d):
 def get_package_additional_metadata (pkg_type, d):
     base_key = "PACKAGE_ADD_METADATA"
     for key in ("%s_%s" % (base_key, pkg_type.upper()), base_key):
-        if d.getVar(key) is None:
+        if d.getVar(key, False) is None:
             continue
         d.setVarFlag(key, "type", "list")
-        if d.getVarFlag(key, "separator") is None:
+        if d.getVarFlag(key, "separator", True) is None:
             d.setVarFlag(key, "separator", "\\n")
         metadata_fields = [field.strip() for field in oe.data.typed_value(key, d)]
         return "\n".join(metadata_fields).strip()
@@ -875,8 +876,8 @@ python split_and_strip_files () {
     #
     elffiles = {}
     symlinks = {}
-    hardlinks = {}
     kernmods = []
+    inodes = {}
     libdir = os.path.abspath(dvar + os.sep + d.getVar("libdir", True))
     baselibdir = os.path.abspath(dvar + os.sep + d.getVar("base_libdir", True))
     if (d.getVar('INHIBIT_PACKAGE_STRIP', True) != '1'):
@@ -914,6 +915,7 @@ python split_and_strip_files () {
                             #bb.note("Sym: %s (%d)" % (ltarget, isELF(ltarget)))
                             symlinks[file] = target
                         continue
+
                     # It's a file (or hardlink), not a link
                     # ...but is it ELF, and is it already stripped?
                     elf_file = isELF(file)
@@ -925,28 +927,30 @@ python split_and_strip_files () {
                                 msg = "File '%s' from %s was already stripped, this will prevent future debugging!" % (file[len(dvar):], pn)
                                 package_qa_handle_error("already-stripped", msg, d)
                             continue
-                        # Check if it's a hard link to something else
-                        if s.st_nlink > 1:
-                            file_reference = "%d_%d" % (s.st_dev, s.st_ino)
-                            # Hard link to something else
-                            hardlinks[file] = file_reference
-                            continue
-                        elffiles[file] = elf_file
+
+                        # At this point we have an unstripped elf file. We need to:
+                        #  a) Make sure any file we strip is not hardlinked to anything else outside this tree
+                        #  b) Only strip any hardlinked file once (no races)
+                        #  c) Track any hardlinks between files so that we can reconstruct matching debug file hardlinks
+
+                        # Use a reference of device ID and inode number to indentify files
+                        file_reference = "%d_%d" % (s.st_dev, s.st_ino)
+                        if file_reference in inodes:
+                            os.unlink(file)
+                            os.link(inodes[file_reference][0], file)
+                            inodes[file_reference].append(file)
+                        else:
+                            inodes[file_reference] = [file]
+                            # break hardlink
+                            bb.utils.copyfile(file, file)
+                            elffiles[file] = elf_file
+                        # Modified the file so clear the cache
+                        cpath.updatecache(file)
 
     #
     # First lets process debug splitting
     #
     if (d.getVar('INHIBIT_PACKAGE_DEBUG_SPLIT', True) != '1'):
-        hardlinkmap = {}
-        # For hardlinks, process only one of the files
-        for file in hardlinks:
-            file_reference = hardlinks[file]
-            if file_reference not in hardlinkmap:
-                # If this is a new file, add it as a reference, and
-                # update it's type, so we can fall through and split
-                elffiles[file] = isELF(file)
-                hardlinkmap[file_reference] = file
-
         for file in elffiles:
             src = file[len(dvar):]
             dest = debuglibdir + os.path.dirname(src) + debugdir + "/" + os.path.basename(src) + debugappend
@@ -959,13 +963,14 @@ python split_and_strip_files () {
             splitdebuginfo(file, fpath, debugsrcdir, sourcefile, d)
 
         # Hardlink our debug symbols to the other hardlink copies
-        for file in hardlinks:
-            if file not in elffiles:
+        for ref in inodes:
+            if len(inodes[ref]) == 1:
+                continue
+            for file in inodes[ref][1:]:
                 src = file[len(dvar):]
                 dest = debuglibdir + os.path.dirname(src) + debugdir + "/" + os.path.basename(src) + debugappend
                 fpath = dvar + dest
-                file_reference = hardlinks[file]
-                target = hardlinkmap[file_reference][len(dvar):]
+                target = inodes[ref][0][len(dvar):]
                 ftarget = dvar + debuglibdir + os.path.dirname(target) + debugdir + "/" + os.path.basename(target) + debugappend
                 bb.utils.mkdirhier(os.path.dirname(fpath))
                 #bb.note("Link %s -> %s" % (fpath, ftarget))
@@ -1036,18 +1041,19 @@ python populate_packages () {
 
     bb.utils.mkdirhier(outdir)
     os.chdir(dvar)
+    
+    autodebug = not (d.getVar("NOAUTOPACKAGEDEBUG", True) or False)
 
-    # Sanity check PACKAGES for duplicates and for LICENSE_EXCLUSION
+    # Sanity check PACKAGES for duplicates
     # Sanity should be moved to sanity.bbclass once we have the infrastucture
     package_list = []
 
     for pkg in packages.split():
-        if d.getVar('LICENSE_EXCLUSION-' + pkg, True):
-            msg = "%s has an incompatible license. Excluding from packaging." % pkg
-            package_qa_handle_error("incompatible-license", msg, d)
         if pkg in package_list:
             msg = "%s is listed in PACKAGES multiple times, this leads to packaging errors." % pkg
             package_qa_handle_error("packages-list", msg, d)
+        elif autodebug and pkg.endswith("-dbg"):
+            package_list.insert(0, pkg)
         else:
             package_list.append(pkg)
     d.setVar('PACKAGES', ' '.join(package_list))
@@ -1057,6 +1063,16 @@ python populate_packages () {
 
     # os.mkdir masks the permissions with umask so we have to unset it first
     oldumask = os.umask(0)
+
+    debug = []
+    for root, dirs, files in cpath.walk(dvar):
+        dir = root[len(dvar):]
+        if not dir:
+            dir = os.sep
+        for f in (files + dirs):
+            path = "." + os.path.join(dir, f)
+            if "/.debug/" in path or path.endswith("/.debug"):
+                debug.append(path)
 
     for pkg in package_list:
         root = os.path.join(pkgdest, pkg)
@@ -1071,15 +1087,15 @@ python populate_packages () {
         origfiles = filesvar.split()
         files = files_from_filevars(origfiles)
 
+        if autodebug and pkg.endswith("-dbg"):
+            files.extend(debug)
+
         for file in files:
             if (not cpath.islink(file)) and (not cpath.exists(file)):
                 continue
             if file in seen:
                 continue
             seen.append(file)
-
-            if d.getVar('LICENSE_EXCLUSION-' + pkg, True):
-                continue
 
             def mkdir(src, dest, p):
                 src = os.path.join(src, p)
@@ -1121,6 +1137,16 @@ python populate_packages () {
     os.umask(oldumask)
     os.chdir(workdir)
 
+    # Handle LICENSE_EXCLUSION
+    package_list = []
+    for pkg in packages.split():
+        if d.getVar('LICENSE_EXCLUSION-' + pkg, True):
+            msg = "%s has an incompatible license. Excluding from packaging." % pkg
+            package_qa_handle_error("incompatible-license", msg, d)
+        else:
+            package_list.append(pkg)
+    d.setVar('PACKAGES', ' '.join(package_list))
+
     unshipped = []
     for root, dirs, files in cpath.walk(dvar):
         dir = root[len(dvar):]
@@ -1132,12 +1158,14 @@ python populate_packages () {
                 unshipped.append(path)
 
     if unshipped != []:
-        msg = pn + ": Files/directories were installed but not shipped"
+        msg = pn + ": Files/directories were installed but not shipped in any package:"
         if "installed-vs-shipped" in (d.getVar('INSANE_SKIP_' + pn, True) or "").split():
             bb.note("Package %s skipping QA tests: installed-vs-shipped" % pn)
         else:
             for f in unshipped:
                 msg = msg + "\n  " + f
+            msg = msg + "\nPlease set FILES such that these items are packaged. Alternatively if they are unneeded, avoid installing them or delete them within do_install.\n"
+            msg = msg + "%s: %d installed and not shipped files." % (pn, len(unshipped))
             package_qa_handle_error("installed-vs-shipped", msg, d)
 }
 populate_packages[dirs] = "${D}"
@@ -1145,7 +1173,7 @@ populate_packages[dirs] = "${D}"
 python package_fixsymlinks () {
     import errno
     pkgdest = d.getVar('PKGDEST', True)
-    packages = d.getVar("PACKAGES").split()
+    packages = d.getVar("PACKAGES", False).split()
 
     dangling_links = {}
     pkg_files = {}
@@ -1504,7 +1532,7 @@ python package_do_shlibs() {
             rpath = []
             p = sub.Popen([d.expand("${HOST_PREFIX}otool"), '-l', file],stdout=sub.PIPE,stderr=sub.PIPE)
             err, out = p.communicate()
-            # If returned succesfully, process stderr for results
+            # If returned successfully, process stderr for results
             if p.returncode == 0:
                 for l in err.split("\n"):
                     l = l.strip()
@@ -1513,7 +1541,7 @@ python package_do_shlibs() {
 
         p = sub.Popen([d.expand("${HOST_PREFIX}otool"), '-L', file],stdout=sub.PIPE,stderr=sub.PIPE)
         err, out = p.communicate()
-        # If returned succesfully, process stderr for results
+        # If returned successfully, process stderr for results
         if p.returncode == 0:
             for l in err.split("\n"):
                 l = l.strip()
@@ -1888,7 +1916,7 @@ python package_depchains() {
 
     for suffix in pkgs:
         for pkg in pkgs[suffix]:
-            if d.getVarFlag('RRECOMMENDS_' + pkg, 'nodeprrecs'):
+            if d.getVarFlag('RRECOMMENDS_' + pkg, 'nodeprrecs', True):
                 continue
             (base, func) = pkgs[suffix][pkg]
             if suffix == "-dev":
@@ -1908,7 +1936,7 @@ python package_depchains() {
 
 # Since bitbake can't determine which variables are accessed during package
 # iteration, we need to list them here:
-PACKAGEVARS = "FILES RDEPENDS RRECOMMENDS SUMMARY DESCRIPTION RSUGGESTS RPROVIDES RCONFLICTS PKG ALLOW_EMPTY pkg_postinst pkg_postrm INITSCRIPT_NAME INITSCRIPT_PARAMS DEBIAN_NOAUTONAME ALTERNATIVE PKGE PKGV PKGR USERADD_PARAM GROUPADD_PARAM CONFFILES"
+PACKAGEVARS = "FILES RDEPENDS RRECOMMENDS SUMMARY DESCRIPTION RSUGGESTS RPROVIDES RCONFLICTS PKG ALLOW_EMPTY pkg_postinst pkg_postrm INITSCRIPT_NAME INITSCRIPT_PARAMS DEBIAN_NOAUTONAME ALTERNATIVE PKGE PKGV PKGR USERADD_PARAM GROUPADD_PARAM CONFFILES SYSTEMD_SERVICE LICENSE SECTION pkg_preinst pkg_prerm RREPLACES GROUPMEMS_PARAM SYSTEMD_AUTO_ENABLE"
 
 def gen_packagevar(d):
     ret = []
@@ -2026,6 +2054,10 @@ python do_package () {
 
     for f in (d.getVar('PACKAGEFUNCS', True) or '').split():
         bb.build.exec_func(f, d)
+
+    qa_sane = d.getVar("QA_SANE", True)
+    if not qa_sane:
+        bb.fatal("Fatal QA errors found, failing task.")
 }
 
 do_package[dirs] = "${SHLIBSWORKDIR} ${PKGDESTWORK} ${D}"

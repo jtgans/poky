@@ -41,7 +41,7 @@ USE_ALTERNATIVES_FOR = " \
 	gprof \
 	ld \
 	ld.bfd \
-	${@bb.utils.contains('DISTRO_FEATURES', 'ld-is-gold', 'ld.gold dwp', '', d)} \
+	ld.gold dwp \
 	nm \
 	objcopy \
 	objdump \
@@ -61,8 +61,6 @@ python do_package_prepend() {
         d.setVarFlag('ALTERNATIVE_LINK_NAME', alt, bindir + "/" + alt)
 }
 
-# FILES_${PN}-dbg = "${prefix}/${TARGET_SYS}/bin/.debug ${prefix}/${libdir}/.debug"
-
 B = "${S}/build.${HOST_SYS}.${TARGET_SYS}"
 
 EXTRA_OECONF = "--program-prefix=${TARGET_PREFIX} \
@@ -73,7 +71,7 @@ EXTRA_OECONF = "--program-prefix=${TARGET_PREFIX} \
 
 LDGOLD_class-native = ""
 LDGOLD_class-crosssdk = ""
-LDGOLD ?= "${@bb.utils.contains('DISTRO_FEATURES', 'ld-is-gold', '--enable-gold=default --enable-threads', '', d)}"
+LDGOLD ?= "${@bb.utils.contains('DISTRO_FEATURES', 'ld-is-gold', '--enable-gold=default --enable-threads', '--enable-gold --enable-ld=default', d)}"
 
 # This is necessary due to a bug in the binutils Makefiles
 # EXTRA_OEMAKE = "configure-build-libiberty all"

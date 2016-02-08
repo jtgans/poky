@@ -80,6 +80,7 @@ class SignatureGeneratorBasic(SignatureGenerator):
         self.taskdeps = {}
         self.runtaskdeps = {}
         self.file_checksum_values = {}
+        self.taints = {}
         self.gendeps = {}
         self.lookupcache = {}
         self.pkgnameextract = re.compile("(?P<fn>.*)\..*")
@@ -145,7 +146,7 @@ class SignatureGeneratorBasic(SignatureGenerator):
         try:
             taskdeps = self._build_data(fn, d)
         except:
-            bb.note("Error during finalise of %s" % fn)
+            bb.warn("Error during finalise of %s" % fn)
             raise
 
         #Slow but can be useful for debugging mismatched basehashes
@@ -199,11 +200,14 @@ class SignatureGeneratorBasic(SignatureGenerator):
         if 'nostamp' in taskdep and task in taskdep['nostamp']:
             # Nostamp tasks need an implicit taint so that they force any dependent tasks to run
             import uuid
-            data = data + str(uuid.uuid4())
+            taint = str(uuid.uuid4())
+            data = data + taint
+            self.taints[k] = "nostamp:" + taint
 
         taint = self.read_taint(fn, task, dataCache.stamp[fn])
         if taint:
             data = data + taint
+            self.taints[k] = taint
             logger.warn("%s is tainted from a forced run" % k)
 
         h = hashlib.md5(data).hexdigest()
@@ -246,6 +250,10 @@ class SignatureGeneratorBasic(SignatureGenerator):
         taint = self.read_taint(fn, task, stampbase)
         if taint:
             data['taint'] = taint
+
+        if runtime and k in self.taints:
+            if 'nostamp:' in self.taints[k]:
+                data['taint'] = self.taints[k]
 
         fd, tmpfile = tempfile.mkstemp(dir=os.path.dirname(sigfile), prefix="sigtask.")
         try:
@@ -419,12 +427,16 @@ def compare_sigfiles(a, b, recursecb = None):
         for f in removed:
             output.append("Dependency on checksum of file %s was removed" % (f))
 
-    changed = []
-    for idx, task in enumerate(a_data['runtaskdeps']):
-        a = a_data['runtaskdeps'][idx]
-        b = b_data['runtaskdeps'][idx]
-        if a_data['runtaskhashes'][a] != b_data['runtaskhashes'][b]:
-            changed.append("%s with hash %s\n changed to\n%s with hash %s" % (a, a_data['runtaskhashes'][a], b, b_data['runtaskhashes'][b]))
+
+    if len(a_data['runtaskdeps']) != len(b_data['runtaskdeps']):
+        changed = ["Number of task dependencies changed"]
+    else:
+        changed = []
+        for idx, task in enumerate(a_data['runtaskdeps']):
+            a = a_data['runtaskdeps'][idx]
+            b = b_data['runtaskdeps'][idx]
+            if a_data['runtaskhashes'][a] != b_data['runtaskhashes'][b]:
+                changed.append("%s with hash %s\n changed to\n%s with hash %s" % (a, a_data['runtaskhashes'][a], b, b_data['runtaskhashes'][b]))
 
     if changed:
         output.append("runtaskdeps changed from %s to %s" % (clean_basepaths_list(a_data['runtaskdeps']), clean_basepaths_list(b_data['runtaskdeps'])))

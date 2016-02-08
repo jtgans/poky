@@ -13,6 +13,8 @@ SRC_URI = "${SAVANNAH_GNU_MIRROR}/sysvinit/sysvinit-${PV}.tar.bz2 \
            file://install.patch \
            file://crypt-lib.patch \
            file://pidof-add-m-option.patch \
+           file://0001-This-fixes-an-issue-that-clang-reports-about-mutlipl.patch \
+           file://realpath.patch \
            file://rcS-default \
            file://rc \
            file://rcS \
@@ -29,7 +31,7 @@ B = "${S}/src"
 inherit update-alternatives
 DEPENDS_append = " update-rc.d-native base-passwd"
 
-ALTERNATIVE_${PN} = "init mountpoint halt reboot runlevel shutdown poweroff last mesg utmpdump wall"
+ALTERNATIVE_${PN} = "init mountpoint halt reboot runlevel shutdown poweroff last lastb mesg utmpdump wall"
 
 ALTERNATIVE_PRIORITY = "200"
 
@@ -99,4 +101,9 @@ do_install () {
 
 	chown root.shutdown ${D}${base_sbindir}/halt ${D}${base_sbindir}/shutdown
 	chmod o-x,u+s ${D}${base_sbindir}/halt ${D}${base_sbindir}/shutdown
+}
+
+python () {
+    if not bb.utils.contains('DISTRO_FEATURES', 'sysvinit', True, False, d):
+        raise bb.parse.SkipPackage("'sysvinit' not in DISTRO_FEATURES")
 }

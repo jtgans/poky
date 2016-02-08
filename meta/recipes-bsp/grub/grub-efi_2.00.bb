@@ -33,6 +33,8 @@ EXTRA_OECONF = "--with-platform=efi --disable-grub-mkfont \
                 --enable-efiemu=no --program-prefix='' \
                 --enable-liblzma=no --enable-device-mapper=no --enable-libzfs=no"
 
+EXTRA_OECONF += "${@bb.utils.contains('DISTRO_FEATURES', 'largefile', '--enable-largefile ac_cv_sizeof_off_t=8', '--disable-largefile', d)}"
+
 do_install_class-native() {
 	install -d ${D}${bindir}
 	install -m 755 grub-mkimage ${D}${bindir}
@@ -55,9 +57,6 @@ do_deploy_class-native() {
 
 addtask deploy after do_install before do_build
 
-FILES_${PN}-dbg += "${libdir}/grub/${GRUB_TARGET}-efi/.debug \
-                   /boot/efi/EFI/BOOT/${GRUB_TARGET}-efi/.debug \
-                    "
 FILES_${PN} += "${libdir}/grub/${GRUB_TARGET}-efi \
                 ${datadir}/grub \
                 "

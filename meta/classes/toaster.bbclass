@@ -143,35 +143,55 @@ python toaster_image_dumpdata() {
     image_types.bbclass will spell out IMAGE_CMD_xxx variables that actually
     have hardcoded ways to create image file names in them.
     So we look for files starting with the set name.
+
+    We also look for other files in the images/ directory which don't
+    match IMAGE_NAME, such as the kernel bzImage, modules tarball etc.
     """
 
-    deploy_dir_image = d.getVar('DEPLOY_DIR_IMAGE', True);
+    dir_to_walk = d.getVar('DEPLOY_DIR_IMAGE', True);
     image_name = d.getVar('IMAGE_NAME', True);
-
     image_info_data = {}
     artifact_info_data = {}
 
-    # collect all artifacts
-    for dirpath, dirnames, filenames in os.walk(deploy_dir_image):
-        for fn in filenames:
+    # collect all images and artifacts in the images directory
+    for dirpath, dirnames, filenames in os.walk(dir_to_walk):
+        for filename in filenames:
+            full_path = os.path.join(dirpath, filename)
             try:
-                if fn.startswith(image_name):
-                    image_output = os.path.join(dirpath, fn)
-                    image_info_data[image_output] = os.stat(image_output).st_size
+                if filename.startswith(image_name):
+                    # image
+                    image_info_data[full_path] = os.stat(full_path).st_size
                 else:
-                    import stat
-                    artifact_path = os.path.join(dirpath, fn)
-                    filestat = os.stat(artifact_path)
-                    if stat.S_ISREG(filestat.st_mode):
-                        artifact_info_data[artifact_path] = filestat.st_size
+                    # other non-image artifact
+                    if not os.path.islink(full_path):
+                        artifact_info_data[full_path] = os.stat(full_path).st_size
             except OSError as e:
                 bb.event.fire(bb.event.MetadataEvent("OSErrorException", e), d)
 
-    bb.event.fire(bb.event.MetadataEvent("ImageFileSize",image_info_data), d)
-    bb.event.fire(bb.event.MetadataEvent("ArtifactFileSize",artifact_info_data), d)
+    bb.event.fire(bb.event.MetadataEvent("ImageFileSize", image_info_data), d)
+    bb.event.fire(bb.event.MetadataEvent("ArtifactFileSize", artifact_info_data), d)
 }
 
+python toaster_artifact_dumpdata() {
+    """
+    Dump data about artifacts in the SDK_DEPLOY directory
+    """
 
+    dir_to_walk = d.getVar("SDK_DEPLOY", True)
+    artifact_info_data = {}
+
+    # collect all artifacts in the sdk directory
+    for dirpath, dirnames, filenames in os.walk(dir_to_walk):
+        for filename in filenames:
+            full_path = os.path.join(dirpath, filename)
+            try:
+                if not os.path.islink(full_path):
+                    artifact_info_data[full_path] = os.stat(full_path).st_size
+            except OSError as e:
+                bb.event.fire(bb.event.MetadataEvent("OSErrorException", e), d)
+
+    bb.event.fire(bb.event.MetadataEvent("ArtifactFileSize", artifact_info_data), d)
+}
 
 # collect list of buildstats files based on fired events; when the build completes, collect all stats and fire an event with collected data
 
@@ -189,18 +209,14 @@ python toaster_collect_task_stats() {
         lock = bb.utils.lockfile(e.data.expand("${TOPDIR}/toaster.lock"), False, True)
 
         with open(os.path.join(e.data.getVar('BUILDSTATS_BASE', True), "toasterstatlist"), "a") as fout:
-            bn = get_bn(e)
-            bsdir = os.path.join(e.data.getVar('BUILDSTATS_BASE', True), bn)
-            taskdir = os.path.join(bsdir, e.data.expand("${PF}"))
-            fout.write("%s:%s:%s:%s\n" % (e.taskfile, e.taskname, os.path.join(taskdir, e.task), e.data.expand("${PN}")))
+            taskdir = e.data.expand("${BUILDSTATS_BASE}/${BUILDNAME}/${PF}")
+            fout.write("%s::%s::%s::%s\n" % (e.taskfile, e.taskname, os.path.join(taskdir, e.task), e.data.expand("${PN}")))
 
         bb.utils.unlockfile(lock)
 
     def _read_stats(filename):
         cpu_usage = 0
         disk_io = 0
-        startio = '0'
-        endio = '0'
         started = '0'
         ended = '0'
         pn = ''
@@ -215,19 +231,17 @@ python toaster_collect_task_stats() {
         if "CPU usage" in statinfo:
             cpu_usage = str(statinfo["CPU usage"]).strip('% \n\r')
 
-        if "EndTimeIO" in statinfo:
-            endio = str(statinfo["EndTimeIO"]).strip('% \n\r')
+        if "IO write_bytes" in statinfo:
+            disk_io = disk_io + int(statinfo["IO write_bytes"].strip('% \n\r'))
 
-        if "StartTimeIO" in statinfo:
-            startio = str(statinfo["StartTimeIO"]).strip('% \n\r')
+        if "IO read_bytes" in statinfo:
+            disk_io = disk_io + int(statinfo["IO read_bytes"].strip('% \n\r'))
 
         if "Started" in statinfo:
             started = str(statinfo["Started"]).strip('% \n\r')
 
         if "Ended" in statinfo:
             ended = str(statinfo["Ended"]).strip('% \n\r')
-
-        disk_io = int(endio) - int(startio)
 
         elapsed_time = float(ended) - float(started)
 
@@ -245,7 +259,7 @@ python toaster_collect_task_stats() {
         events = []
         with open(os.path.join(e.data.getVar('BUILDSTATS_BASE', True), "toasterstatlist"), "r") as fin:
             for line in fin:
-                (taskfile, taskname, filename, recipename) = line.strip().split(":")
+                (taskfile, taskname, filename, recipename) = line.strip().split("::")
                 events.append((taskfile, taskname, _read_stats(filename), recipename))
         bb.event.fire(bb.event.MetadataEvent("BuildStatsList", events), e.data)
         os.unlink(os.path.join(e.data.getVar('BUILDSTATS_BASE', True), "toasterstatlist"))
@@ -347,9 +361,15 @@ toaster_collect_task_stats[eventmask] = "bb.event.BuildCompleted bb.build.TaskSu
 
 addhandler toaster_buildhistory_dump
 toaster_buildhistory_dump[eventmask] = "bb.event.BuildCompleted"
+
 do_package[postfuncs] += "toaster_package_dumpdata "
 do_package[vardepsexclude] += "toaster_package_dumpdata "
 
-do_rootfs[postfuncs] += "toaster_image_dumpdata "
+do_image_complete[postfuncs] += "toaster_image_dumpdata "
+do_image_complete[vardepsexclude] += "toaster_image_dumpdata "
+
 do_rootfs[postfuncs] += "toaster_licensemanifest_dump "
-do_rootfs[vardepsexclude] += "toaster_image_dumpdata toaster_licensemanifest_dump"
+do_rootfs[vardepsexclude] += "toaster_licensemanifest_dump "
+
+do_populate_sdk[postfuncs] += "toaster_artifact_dumpdata "
+do_populate_sdk[vardepsexclude] += "toaster_artifact_dumpdata "

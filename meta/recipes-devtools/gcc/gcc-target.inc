@@ -10,6 +10,11 @@ EXTRA_OECONF_PATHS = "\
 
 EXTRA_OECONF_append_linuxstdbase = " --enable-clocale=gnu"
 
+# libcc1 requres gcc_cv_objdump when cross build, but gcc_cv_objdump is
+# set in subdir gcc, so subdir libcc1 can't use it, export it here to
+# fix the problem.
+export gcc_cv_objdump = "${TARGET_PREFIX}objdump"
+
 EXTRA_OECONF_GCC_FLOAT = "${@get_gcc_float_setting(bb, d)}"
 
 PACKAGES = "\
@@ -19,7 +24,6 @@ PACKAGES = "\
     g77 g77-symlinks \
     gfortran gfortran-symlinks \
     gcov gcov-symlinks \
-    ${PN}-plugin-dev \
     ${PN}-doc \
     ${PN}-dev \
     ${PN}-dbg \
@@ -27,7 +31,7 @@ PACKAGES = "\
 
 FILES_${PN} = "\
     ${bindir}/${TARGET_PREFIX}gcc* \
-    ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/collect2 \
+    ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/collect2* \
     ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/cc* \
     ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/lto* \
     ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/lib*${SOLIBS} \
@@ -40,15 +44,9 @@ FILES_${PN} = "\
 "
 INSANE_SKIP_${PN} += "dev-so"
 
-FILES_${PN}-dbg += "\
-    ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/.debug/ \
-    ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/plugin/.debug/ \
-"
 FILES_${PN}-dev = "\
     ${gcclibdir}/${TARGET_SYS}/${BINV}/lib*${SOLIBSDEV} \
     ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/lib*${SOLIBSDEV} \
-"
-FILES_${PN}-plugin-dev = "\
     ${gcclibdir}/${TARGET_SYS}/${BINV}/plugin/include/ \
     ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/plugin/gengtype \
     ${gcclibdir}/${TARGET_SYS}/${BINV}/plugin/gtype.state \
@@ -81,16 +79,20 @@ FILES_gfortran-symlinks = "\
     ${bindir}/f95"
 
 FILES_cpp = "\
-    ${bindir}/${TARGET_PREFIX}cpp \
+    ${bindir}/${TARGET_PREFIX}cpp* \
     ${base_libdir}/cpp \
     ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/cc1"
 FILES_cpp-symlinks = "${bindir}/cpp"
 
-FILES_gcov = "${bindir}/${TARGET_PREFIX}gcov"
-FILES_gcov-symlinks = "${bindir}/gcov"
+FILES_gcov = "${bindir}/${TARGET_PREFIX}gcov* \
+    ${bindir}/${TARGET_PREFIX}gcov-tool* \
+"
+FILES_gcov-symlinks = "${bindir}/gcov \
+    ${bindir}/gcov-tool \
+"
 
 FILES_g++ = "\
-    ${bindir}/${TARGET_PREFIX}g++ \
+    ${bindir}/${TARGET_PREFIX}g++* \
     ${libexecdir}/gcc/${TARGET_SYS}/${BINV}/cc1plus \
 "
 FILES_g++-symlinks = "\
@@ -135,7 +137,7 @@ do_install () {
 	cd ${D}${bindir}
 
 	# We care about g++ not c++
-	rm -f *c++
+	rm -f *c++*
 
 	# We don't care about the gcc-<version> ones for this
 	rm -f *gcc-?.?*
@@ -165,6 +167,37 @@ do_install () {
 	ln -sf gcc cc
 
 	chown -R root:root ${D}
+}
+
+do_install_append () {
+        #
+        # Thefixinc.sh script, run on the gcc's compile phase, looks into sysroot header
+        # files and places the modified files into
+        # {D}${libdir}/gcc/${TARGET_SYS}/${BINV}/include-fixed folder. This makes the
+        # build not deterministic. The following code prunes all those headers
+        # except those under include-fixed/linux, *limits.h and README, yielding
+        # the same include-fixed folders no matter what sysroot
+
+        include_fixed="${D}${libdir}/gcc/${TARGET_SYS}/${BINV}/include-fixed"
+        for f in $(find ${include_fixed} -type f); do
+                case $f in
+                */include-fixed/linux/*)
+                    continue
+                    ;;
+                */include-fixed/*limits.h)
+                    continue
+                    ;;
+                */include-fixed/README)
+                    continue
+                    ;;
+                *)
+                    # remove file and directory if empty
+                    bbdebug 2 "Pruning $f"
+                    rm $f
+                    find $(dirname $f) -maxdepth 0 -empty -exec rmdir {} \;
+                    ;;
+                esac
+        done
 }
 
 # Installing /usr/lib/gcc/* means we'd have two copies, one from gcc-cross

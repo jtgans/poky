@@ -13,8 +13,8 @@ def imagetypes_getdepends(d):
     deps = []
     ctypes = d.getVar('COMPRESSIONTYPES', True).split()
     for type in (d.getVar('IMAGE_FSTYPES', True) or "").split():
-        if type in ["vmdk", "live", "iso", "hddimg"]:
-            type = "ext3"
+        if type in ["vmdk", "vdi", "qcow2", "hdddirect", "live", "iso", "hddimg"]:
+            type = "ext4"
         basetype = type
         for ctype in ctypes:
             if type.endswith("." + ctype):
@@ -49,8 +49,16 @@ oe_mkext234fs () {
 		extra_imagecmd=$@
 	fi
 
+	# If generating an empty image the size of the sparse block should be large
+	# enough to allocate an ext4 filesystem using 4096 bytes per inode, this is
+	# about 60K, so dd needs a minimum count of 60, with bs=1024 (bytes per IO)
+	eval local COUNT=\"0\"
+	eval local MIN_COUNT=\"60\"
+	if [ $ROOTFS_SIZE -lt $MIN_COUNT ]; then
+		eval COUNT=\"$MIN_COUNT\"
+	fi
 	# Create a sparse image block
-	dd if=/dev/zero of=${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.$fstype seek=$ROOTFS_SIZE count=0 bs=1k
+	dd if=/dev/zero of=${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.$fstype seek=$ROOTFS_SIZE count=$COUNT bs=1024
 	mkfs.$fstype -F $extra_imagecmd ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.$fstype -d ${IMAGE_ROOTFS}
 }
 
@@ -71,9 +79,21 @@ IMAGE_CMD_btrfs () {
 IMAGE_CMD_squashfs = "mksquashfs ${IMAGE_ROOTFS} ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.squashfs ${EXTRA_IMAGECMD} -noappend"
 IMAGE_CMD_squashfs-xz = "mksquashfs ${IMAGE_ROOTFS} ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.squashfs-xz ${EXTRA_IMAGECMD} -noappend -comp xz"
 IMAGE_CMD_squashfs-lzo = "mksquashfs ${IMAGE_ROOTFS} ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.squashfs-lzo ${EXTRA_IMAGECMD} -noappend -comp lzo"
-IMAGE_CMD_tar = "tar -cvf ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.tar -C ${IMAGE_ROOTFS} ."
 
-do_rootfs[cleandirs] += "${WORKDIR}/cpio_append"
+# By default, tar from the host is used, which can be quite old. If
+# you need special parameters (like --xattrs) which are only supported
+# by GNU tar upstream >= 1.27, then override that default:
+# IMAGE_CMD_TAR = "tar --xattrs --xattrs-include=*"
+# IMAGE_DEPENDS_tar_append = " tar-replacement-native"
+# EXTRANATIVEPATH += "tar-native"
+#
+# The GNU documentation does not specify whether --xattrs-include is necessary.
+# In practice, it turned out to be not needed when creating archives and
+# required when extracting, but it seems prudent to use it in both cases.
+IMAGE_CMD_TAR ?= "tar"
+IMAGE_CMD_tar = "${IMAGE_CMD_TAR} -cvf ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.tar -C ${IMAGE_ROOTFS} ."
+
+do_image_cpio[cleandirs] += "${WORKDIR}/cpio_append"
 IMAGE_CMD_cpio () {
 	(cd ${IMAGE_ROOTFS} && find . | cpio -o -H newc >${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.cpio)
 	if [ ! -L ${IMAGE_ROOTFS}/init -a ! -e ${IMAGE_ROOTFS}/init ]; then
@@ -97,20 +117,90 @@ IMAGE_TYPEDEP_elf = "cpio.gz"
 
 UBI_VOLNAME ?= "${MACHINE}-rootfs"
 
-IMAGE_CMD_ubi () {
-	echo \[ubifs\] > ubinize.cfg 
-	echo mode=ubi >> ubinize.cfg
-	echo image=${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.ubifs >> ubinize.cfg 
-	echo vol_id=0 >> ubinize.cfg 
-	echo vol_type=dynamic >> ubinize.cfg 
-	echo vol_name=${UBI_VOLNAME} >> ubinize.cfg 
-	echo vol_flags=autoresize >> ubinize.cfg
-	mkfs.ubifs -r ${IMAGE_ROOTFS} -o ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.ubifs ${MKUBIFS_ARGS}
-	ubinize -o ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.ubi ${UBINIZE_ARGS} ubinize.cfg
+multiubi_mkfs() {
+	local mkubifs_args="$1"
+	local ubinize_args="$2"
+	if [ -z "$3" ]; then
+		local vname=""
+	else
+		local vname="_$3"
+	fi
+
+	echo \[ubifs\] > ubinize${vname}-${IMAGE_NAME}.cfg
+	echo mode=ubi >> ubinize${vname}-${IMAGE_NAME}.cfg
+	echo image=${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}${vname}.rootfs.ubifs >> ubinize${vname}-${IMAGE_NAME}.cfg
+	echo vol_id=0 >> ubinize${vname}-${IMAGE_NAME}.cfg
+	echo vol_type=dynamic >> ubinize${vname}-${IMAGE_NAME}.cfg
+	echo vol_name=${UBI_VOLNAME} >> ubinize${vname}-${IMAGE_NAME}.cfg
+	echo vol_flags=autoresize >> ubinize${vname}-${IMAGE_NAME}.cfg
+	mkfs.ubifs -r ${IMAGE_ROOTFS} -o ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}${vname}.rootfs.ubifs ${mkubifs_args}
+	ubinize -o ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}${vname}.rootfs.ubi ${ubinize_args} ubinize${vname}-${IMAGE_NAME}.cfg
+
+	# Cleanup cfg file
+	mv ubinize${vname}-${IMAGE_NAME}.cfg ${DEPLOY_DIR_IMAGE}/
+
+	# Create own symlinks for 'named' volumes
+	if [ -n "$vname" ]; then
+		cd ${DEPLOY_DIR_IMAGE}
+		if [ -e ${IMAGE_NAME}${vname}.rootfs.ubifs ]; then
+			ln -sf ${IMAGE_NAME}${vname}.rootfs.ubifs \
+			${IMAGE_LINK_NAME}${vname}.ubifs
+		fi
+		if [ -e ${IMAGE_NAME}${vname}.rootfs.ubi ]; then
+			ln -sf ${IMAGE_NAME}${vname}.rootfs.ubi \
+			${IMAGE_LINK_NAME}${vname}.ubi
+		fi
+		cd -
+	fi
 }
-IMAGE_TYPEDEP_ubi = "ubifs"
+
+IMAGE_CMD_multiubi () {
+	# Split MKUBIFS_ARGS_<name> and UBINIZE_ARGS_<name>
+	for name in ${MULTIUBI_BUILD}; do
+		eval local mkubifs_args=\"\$MKUBIFS_ARGS_${name}\"
+		eval local ubinize_args=\"\$UBINIZE_ARGS_${name}\"
+
+		multiubi_mkfs "${mkubifs_args}" "${ubinize_args}" "${name}"
+	done
+}
+
+IMAGE_CMD_ubi () {
+	multiubi_mkfs "${MKUBIFS_ARGS}" "${UBINIZE_ARGS}"
+}
 
 IMAGE_CMD_ubifs = "mkfs.ubifs -r ${IMAGE_ROOTFS} -o ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.rootfs.ubifs ${MKUBIFS_ARGS}"
+
+WKS_FILE ?= "${IMAGE_BASENAME}.${MACHINE}.wks"
+WKS_FILES ?= "${WKS_FILE} ${IMAGE_BASENAME}.wks"
+WKS_SEARCH_PATH ?= "${THISDIR}:${@':'.join('%s/scripts/lib/wic/canned-wks' % l for l in '${BBPATH}:${COREBASE}'.split(':'))}"
+WKS_FULL_PATH = "${@wks_search('${WKS_FILES}'.split(), '${WKS_SEARCH_PATH}') or ''}"
+
+def wks_search(files, search_path):
+    for f in files:
+        if os.path.isabs(f):
+            if os.path.exists(f):
+                return f
+        else:
+            searched = bb.utils.which(search_path, f)
+            if searched:
+                return searched
+
+IMAGE_CMD_wic () {
+	out="${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}"
+	wks="${WKS_FULL_PATH}"
+	if [ -z "$wks" ]; then
+		bbfatal "No kickstart files from WKS_FILES were found: ${WKS_FILES}. Please set WKS_FILE or WKS_FILES appropriately."
+	fi
+
+	BUILDDIR="${TOPDIR}" wic create "$wks" --vars "${STAGING_DIR_TARGET}/imgdata/" -e "${IMAGE_BASENAME}" -o "$out/"
+	mv "$out/build/$(basename "${wks%.wks}")"*.direct "$out.rootfs.wic"
+	rm -rf "$out/"
+}
+IMAGE_CMD_wic[vardepsexclude] = "WKS_FULL_PATH WKS_FILES"
+
+# Rebuild when the wks file or vars in WICVARS change
+USING_WIC = "${@bb.utils.contains_any('IMAGE_FSTYPES', 'wic ' + ' '.join('wic.%s' % c for c in '${COMPRESSIONTYPES}'.split()), '1', '', d)}"
+do_image_wic[file-checksums] += "${@'${WKS_FULL_PATH}:%s' % os.path.exists('${WKS_FULL_PATH}') if '${USING_WIC}' else ''}"
 
 EXTRA_IMAGECMD = ""
 
@@ -139,6 +229,8 @@ IMAGE_DEPENDS_squashfs-lzo = "squashfs-tools-native"
 IMAGE_DEPENDS_elf = "virtual/kernel mkelfimage-native"
 IMAGE_DEPENDS_ubi = "mtd-utils-native"
 IMAGE_DEPENDS_ubifs = "mtd-utils-native"
+IMAGE_DEPENDS_multiubi = "mtd-utils-native"
+IMAGE_DEPENDS_wic = "parted-native"
 
 # This variable is available to request which values are suitable for IMAGE_FSTYPES
 IMAGE_TYPES = " \
@@ -146,32 +238,37 @@ IMAGE_TYPES = " \
     cramfs \
     ext2 ext2.gz ext2.bz2 ext2.lzma \
     ext3 ext3.gz \
+    ext4 ext4.gz \
     btrfs \
     iso \
     hddimg \
     squashfs squashfs-xz squashfs-lzo \
-    ubi ubifs \
+    ubi ubifs multiubi \
     tar tar.gz tar.bz2 tar.xz tar.lz4 \
     cpio cpio.gz cpio.xz cpio.lzma cpio.lz4 \
     vmdk \
+    vdi \
+    qcow2 \
+    hdddirect \
     elf \
+    wic wic.gz wic.bz2 wic.lzma \
 "
 
 COMPRESSIONTYPES = "gz bz2 lzma xz lz4 sum"
 COMPRESS_CMD_lzma = "lzma -k -f -7 ${IMAGE_NAME}.rootfs.${type}"
 COMPRESS_CMD_gz = "gzip -f -9 -c ${IMAGE_NAME}.rootfs.${type} > ${IMAGE_NAME}.rootfs.${type}.gz"
-COMPRESS_CMD_bz2 = "bzip2 -f -k ${IMAGE_NAME}.rootfs.${type}"
+COMPRESS_CMD_bz2 = "pbzip2 -f -k ${IMAGE_NAME}.rootfs.${type}"
 COMPRESS_CMD_xz = "xz -f -k -c ${XZ_COMPRESSION_LEVEL} ${XZ_THREADS} --check=${XZ_INTEGRITY_CHECK} ${IMAGE_NAME}.rootfs.${type} > ${IMAGE_NAME}.rootfs.${type}.xz"
 COMPRESS_CMD_lz4 = "lz4c -9 -c ${IMAGE_NAME}.rootfs.${type} > ${IMAGE_NAME}.rootfs.${type}.lz4"
 COMPRESS_CMD_sum = "sumtool -i ${IMAGE_NAME}.rootfs.${type} -o ${IMAGE_NAME}.rootfs.${type}.sum ${JFFS2_SUM_EXTRA_ARGS}"
 COMPRESS_DEPENDS_lzma = "xz-native"
 COMPRESS_DEPENDS_gz = ""
-COMPRESS_DEPENDS_bz2 = ""
+COMPRESS_DEPENDS_bz2 = "pbzip2-native"
 COMPRESS_DEPENDS_xz = "xz-native"
 COMPRESS_DEPENDS_lz4 = "lz4-native"
 COMPRESS_DEPENDS_sum = "mtd-utils-native"
 
-RUNNABLE_IMAGE_TYPES ?= "ext2 ext3"
+RUNNABLE_IMAGE_TYPES ?= "ext2 ext3 ext4"
 RUNNABLE_MACHINE_PATTERNS ?= "qemu"
 
 DEPLOYABLE_IMAGE_TYPES ?= "hddimg iso" 
@@ -180,5 +277,9 @@ DEPLOYABLE_IMAGE_TYPES ?= "hddimg iso"
 IMAGE_EXTENSION_live = "hddimg iso"
 
 # The IMAGE_TYPES_MASKED variable will be used to mask out from the IMAGE_FSTYPES,
-# images that will not be built at do_rootfs time: vmdk, hddimg, iso, etc.
+# images that will not be built at do_rootfs time: vmdk, vdi, qcow2, hdddirect, hddimg, iso, etc.
 IMAGE_TYPES_MASKED ?= ""
+
+# The WICVARS variable is used to define list of bitbake variables used in wic code
+# variables from this list is written to <image>.env file
+WICVARS ?= "BBLAYERS DEPLOY_DIR_IMAGE HDDDIR IMAGE_BASENAME IMAGE_BOOT_FILES IMAGE_LINK_NAME IMAGE_ROOTFS INITRAMFS_FSTYPES INITRD ISODIR MACHINE_ARCH ROOTFS_SIZE STAGING_DATADIR STAGING_DIR_NATIVE STAGING_LIBDIR TARGET_SYS"

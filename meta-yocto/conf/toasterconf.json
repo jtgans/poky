@@ -4,15 +4,14 @@
         "DISTRO"       : "poky",
         "IMAGE_FSTYPES": "ext3 jffs2 tar.bz2",
         "IMAGE_INSTALL_append": "",
-        "PACKAGE_CLASSES": "package_rpm",
-        "SDKMACHINE"   : "x86_64"
+        "PACKAGE_CLASSES": "package_rpm"
     },
     "layersources": [
         {
             "name": "Local Yocto Project",
             "sourcetype": "local",
             "apiurl": "../../",
-            "branches": ["HEAD", "master", "dizzy"],
+            "branches": ["HEAD" ],
             "layers": [
                 {
                     "name": "openembedded-core",
@@ -39,13 +38,13 @@
             "name": "OpenEmbedded",
             "sourcetype": "layerindex",
             "apiurl": "http://layers.openembedded.org/layerindex/api/",
-            "branches": ["master", "dizzy"]
+            "branches": ["master", "jethro" ,"fido"]
         },
         {
             "name": "Imported layers",
             "sourcetype": "imported",
             "apiurl": "",
-            "branches": ["master", "dizzy", "HEAD"]
+            "branches": ["master", "jethro","fido", "HEAD"]
 
         }
     ],
@@ -57,9 +56,15 @@
             "dirpath": "bitbake"
         },
         {
-            "name": "dizzy",
+            "name": "jethro",
             "giturl": "remote:origin",
-            "branch": "dizzy",
+            "branch": "jethro",
+            "dirpath": "bitbake"
+        },
+        {
+            "name": "fido",
+            "giturl": "remote:origin",
+            "branch": "fido",
             "dirpath": "bitbake"
         },
         {
@@ -80,16 +85,25 @@
             "branch": "master",
             "defaultlayers": [ "openembedded-core", "meta-yocto", "meta-yocto-bsp"],
             "layersourcepriority": { "Imported layers": 99, "Local Yocto Project" : 10, "OpenEmbedded" :  0 },
-            "helptext": "Toaster will run your builds using the <a href=\"http://git.yoctoproject.org/cgit/cgit.cgi/poky/log/\">Yocto Project master branch</a>, where active development takes place. This is not a stable branch, so your builds might not work as expected."
+            "helptext": "Toaster will run your builds using the tip of the <a href=\"http://git.yoctoproject.org/cgit/cgit.cgi/poky/log/\">Yocto Project master branch</a>, where active development takes place. This is not a stable branch, so your builds might not work as expected."
         },
         {
-            "name": "dizzy",
-            "description": "Yocto Project 1.7 Dizzy",
-            "bitbake": "dizzy",
-            "branch": "dizzy",
+            "name": "jethro",
+            "description": "Yocto Project 2.0 Jethro",
+            "bitbake": "jethro",
+            "branch": "jethro",
             "defaultlayers": [ "openembedded-core", "meta-yocto", "meta-yocto-bsp"],
             "layersourcepriority": { "Imported layers": 99, "Local Yocto Project" : 10, "OpenEmbedded" :  0 },
-            "helptext": "Toaster will run your builds with the <a href=\"https://www.yoctoproject.org/downloads/core/dizzy1\">Yocto Project 1.7 \"Dizzy\"</a> release"
+            "helptext": "Toaster will run your builds with the tip of the <a href=\"http://git.yoctoproject.org/cgit/cgit.cgi/poky/log/?h=jethro\">Yocto Project 2.0 \"Jethro\"</a> branch."
+        },
+        {
+            "name": "fido",
+            "description": "Yocto Project 1.8 Fido",
+            "bitbake": "fido",
+            "branch": "fido",
+            "defaultlayers": [ "openembedded-core", "meta-yocto", "meta-yocto-bsp"],
+            "layersourcepriority": { "Imported layers": 99, "Local Yocto Project" : 10, "OpenEmbedded" :  0 },
+            "helptext": "Toaster will run your builds with the tip of the <a href=\"http://git.yoctoproject.org/cgit/cgit.cgi/poky/log/?h=fido\">Yocto Project 1.8 \"Fido\"</a> branch."
         },
         {
             "name": "local",

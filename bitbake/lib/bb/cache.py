@@ -43,7 +43,7 @@ except ImportError:
     logger.info("Importing cPickle failed. "
                 "Falling back to a very slow implementation.")
 
-__cache_version__ = "148"
+__cache_version__ = "149"
 
 def getCacheFile(path, filename, data_hash):
     return os.path.join(path, filename + "." + data_hash)
@@ -85,8 +85,8 @@ class RecipeInfoCommon(object):
             return out_dict
 
     @classmethod
-    def getvar(cls, var, metadata):
-        return metadata.getVar(var, True) or ''
+    def getvar(cls, var, metadata, expand = True):
+        return metadata.getVar(var, expand) or ''
 
 
 class CoreRecipeInfo(RecipeInfoCommon):
@@ -129,8 +129,6 @@ class CoreRecipeInfo(RecipeInfoCommon):
         self.not_world = self.getvar('EXCLUDE_FROM_WORLD', metadata)
         self.stamp = self.getvar('STAMP', metadata)
         self.stampclean = self.getvar('STAMPCLEAN', metadata)        
-        self.stamp_base = self.flaglist('stamp-base', self.tasks, metadata)
-        self.stamp_base_clean = self.flaglist('stamp-base-clean', self.tasks, metadata)
         self.stamp_extrainfo = self.flaglist('stamp-extra-info', self.tasks, metadata)
         self.file_checksums = self.flaglist('file-checksums', self.tasks, metadata, True)
         self.packages_dynamic = self.listvar('PACKAGES_DYNAMIC', metadata)
@@ -142,10 +140,11 @@ class CoreRecipeInfo(RecipeInfoCommon):
         self.rprovides_pkg    = self.pkgvar('RPROVIDES', self.packages, metadata)
         self.rdepends_pkg     = self.pkgvar('RDEPENDS', self.packages, metadata)
         self.rrecommends_pkg  = self.pkgvar('RRECOMMENDS', self.packages, metadata)
-        self.inherits         = self.getvar('__inherit_cache', metadata)
+        self.inherits         = self.getvar('__inherit_cache', metadata, expand=False)
         self.fakerootenv      = self.getvar('FAKEROOTENV', metadata)
         self.fakerootdirs     = self.getvar('FAKEROOTDIRS', metadata)
         self.fakerootnoenv    = self.getvar('FAKEROOTNOENV', metadata)
+        self.extradepsfunc    = self.getvar('calculate_extra_depends', metadata)
 
     @classmethod
     def init_cacheData(cls, cachedata):
@@ -158,8 +157,6 @@ class CoreRecipeInfo(RecipeInfoCommon):
 
         cachedata.stamp = {}
         cachedata.stampclean = {}
-        cachedata.stamp_base = {}
-        cachedata.stamp_base_clean = {}
         cachedata.stamp_extrainfo = {}
         cachedata.file_checksums = {}
         cachedata.fn_provides = {}
@@ -183,6 +180,7 @@ class CoreRecipeInfo(RecipeInfoCommon):
         cachedata.fakerootenv = {}
         cachedata.fakerootnoenv = {}
         cachedata.fakerootdirs = {}
+        cachedata.extradepsfunc = {}
 
     def add_cacheData(self, cachedata, fn):
         cachedata.task_deps[fn] = self.task_deps
@@ -192,8 +190,6 @@ class CoreRecipeInfo(RecipeInfoCommon):
         cachedata.pkg_dp[fn] = self.defaultpref
         cachedata.stamp[fn] = self.stamp
         cachedata.stampclean[fn] = self.stampclean
-        cachedata.stamp_base[fn] = self.stamp_base
-        cachedata.stamp_base_clean[fn] = self.stamp_base_clean
         cachedata.stamp_extrainfo[fn] = self.stamp_extrainfo
         cachedata.file_checksums[fn] = self.file_checksums
 
@@ -220,7 +216,8 @@ class CoreRecipeInfo(RecipeInfoCommon):
             rprovides += self.rprovides_pkg[package]
 
         for rprovide in rprovides:
-            cachedata.rproviders[rprovide].append(fn)
+            if fn not in cachedata.rproviders[rprovide]:
+                cachedata.rproviders[rprovide].append(fn)
 
         for package in self.packages_dynamic:
             cachedata.packages_dynamic[package].append(fn)
@@ -251,6 +248,7 @@ class CoreRecipeInfo(RecipeInfoCommon):
         cachedata.fakerootenv[fn] = self.fakerootenv
         cachedata.fakerootnoenv[fn] = self.fakerootnoenv
         cachedata.fakerootdirs[fn] = self.fakerootdirs
+        cachedata.extradepsfunc[fn] = self.extradepsfunc
 
 
 
@@ -528,7 +526,20 @@ class Cache(object):
 
         if hasattr(info_array[0], 'file_checksums'):
             for _, fl in info_array[0].file_checksums.items():
-                for f in fl.split():
+                fl = fl.strip()
+                while fl:
+                    # A .split() would be simpler but means spaces or colons in filenames would break
+                    a = fl.find(":True")
+                    b = fl.find(":False")
+                    if ((a < 0) and b) or ((b > 0) and (b < a)):
+                       f = fl[:b+6]
+                       fl = fl[b+7:]
+                    elif ((b < 0) and a) or ((a > 0) and (a < b)):
+                       f = fl[:a+5]
+                       fl = fl[a+6:]
+                    else:
+                       break
+                    fl = fl.strip()
                     if "*" in f:
                         continue
                     f, exist = f.split(":")
@@ -659,25 +670,25 @@ class Cache(object):
         """
         chdir_back = False
 
-        from bb import data, parse
+        from bb import parse
 
         # expand tmpdir to include this topdir
-        data.setVar('TMPDIR', data.getVar('TMPDIR', config, 1) or "", config)
+        config.setVar('TMPDIR', config.getVar('TMPDIR', True) or "")
         bbfile_loc = os.path.abspath(os.path.dirname(bbfile))
         oldpath = os.path.abspath(os.getcwd())
         parse.cached_mtime_noerror(bbfile_loc)
-        bb_data = data.init_db(config)
+        bb_data = config.createCopy()
         # The ConfHandler first looks if there is a TOPDIR and if not
         # then it would call getcwd().
         # Previously, we chdir()ed to bbfile_loc, called the handler
         # and finally chdir()ed back, a couple of thousand times. We now
         # just fill in TOPDIR to point to bbfile_loc if there is no TOPDIR yet.
-        if not data.getVar('TOPDIR', bb_data):
+        if not bb_data.getVar('TOPDIR', False):
             chdir_back = True
-            data.setVar('TOPDIR', bbfile_loc, bb_data)
+            bb_data.setVar('TOPDIR', bbfile_loc)
         try:
             if appends:
-                data.setVar('__BBAPPEND', " ".join(appends), bb_data)
+                bb_data.setVar('__BBAPPEND', " ".join(appends))
             bb_data = parse.handle(bbfile, bb_data)
             if chdir_back:
                 os.chdir(oldpath)

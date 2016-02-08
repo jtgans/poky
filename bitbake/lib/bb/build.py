@@ -31,6 +31,7 @@ import logging
 import shlex
 import glob
 import time
+import stat
 import bb
 import bb.msg
 import bb.process
@@ -41,6 +42,20 @@ bblogger = logging.getLogger('BitBake')
 logger = logging.getLogger('BitBake.Build')
 
 NULL = open(os.devnull, 'r+')
+
+__mtime_cache = {}
+
+def cached_mtime_noerror(f):
+    if f not in __mtime_cache:
+        try:
+            __mtime_cache[f] = os.stat(f)[stat.ST_MTIME]
+        except OSError:
+            return 0
+    return __mtime_cache[f]
+
+def reset_cache():
+    global __mtime_cache
+    __mtime_cache = {}
 
 # When we execute a Python function, we'd like certain things
 # in all namespaces, hence we add them to __builtins__.
@@ -144,7 +159,7 @@ class LogTee(object):
 def exec_func(func, d, dirs = None):
     """Execute a BB 'function'"""
 
-    body = d.getVar(func)
+    body = d.getVar(func, False)
     if not body:
         if body is None:
             logger.warn("Function %s doesn't exist", func)
@@ -262,9 +277,8 @@ bb_exit_handler() {
     case $ret in
     0)  ;;
     *)  case $BASH_VERSION in
-        "")   echo "WARNING: exit code $ret from a shell command.";;
-        *)    echo "WARNING: ${BASH_SOURCE[0]}:${BASH_LINENO[0]} exit $ret from
-  \"$BASH_COMMAND\"";;
+        "") echo "WARNING: exit code $ret from a shell command.";;
+        *)  echo "WARNING: ${BASH_SOURCE[0]}:${BASH_LINENO[0]} exit $ret from '$BASH_COMMAND'";;
         esac
         exit $ret
     esac
@@ -298,13 +312,13 @@ def exec_func_shell(func, d, runfile, cwd=None):
 # cleanup
 ret=$?
 trap '' 0
-exit $?
+exit $ret
 ''')
 
     os.chmod(runfile, 0775)
 
     cmd = runfile
-    if d.getVarFlag(func, 'fakeroot'):
+    if d.getVarFlag(func, 'fakeroot', False):
         fakerootcmd = d.getVar('FAKEROOT', True)
         if fakerootcmd:
             cmd = [fakerootcmd, runfile]
@@ -314,14 +328,52 @@ exit $?
     else:
         logfile = sys.stdout
 
-    bb.debug(2, "Executing shell function %s" % func)
+    def readfifo(data):
+        lines = data.split('\0')
+        for line in lines:
+            splitval = line.split(' ', 1)
+            cmd = splitval[0]
+            if len(splitval) > 1:
+                value = splitval[1]
+            else:
+                value = ''
+            if cmd == 'bbplain':
+                bb.plain(value)
+            elif cmd == 'bbnote':
+                bb.note(value)
+            elif cmd == 'bbwarn':
+                bb.warn(value)
+            elif cmd == 'bberror':
+                bb.error(value)
+            elif cmd == 'bbfatal':
+                # The caller will call exit themselves, so bb.error() is
+                # what we want here rather than bb.fatal()
+                bb.error(value)
+            elif cmd == 'bbfatal_log':
+                bb.error(value, forcelog=True)
+            elif cmd == 'bbdebug':
+                splitval = value.split(' ', 1)
+                level = int(splitval[0])
+                value = splitval[1]
+                bb.debug(level, value)
 
-    try:
-        with open(os.devnull, 'r+') as stdin:
-            bb.process.run(cmd, shell=False, stdin=stdin, log=logfile)
-    except bb.process.CmdError:
-        logfn = d.getVar('BB_LOGFILE', True)
-        raise FuncFailed(func, logfn)
+    tempdir = d.getVar('T', True)
+    fifopath = os.path.join(tempdir, 'fifo.%s' % os.getpid())
+    if os.path.exists(fifopath):
+        os.unlink(fifopath)
+    os.mkfifo(fifopath)
+    with open(fifopath, 'r+') as fifo:
+        try:
+            bb.debug(2, "Executing shell function %s" % func)
+
+            try:
+                with open(os.devnull, 'r+') as stdin:
+                    bb.process.run(cmd, shell=False, stdin=stdin, log=logfile, extrafiles=[(fifo,readfifo)])
+            except bb.process.CmdError:
+                logfn = d.getVar('BB_LOGFILE', True)
+                raise FuncFailed(func, logfn)
+        finally:
+            os.unlink(fifopath)
 
     bb.debug(2, "Shell function %s finished" % func)
 
@@ -341,7 +393,7 @@ def _exec_task(fn, task, d, quieterr):
     Execution of a task involves a bit more setup than executing a function,
     running it with its own local metadata, and with some useful variables set.
     """
-    if not d.getVarFlag(task, 'task'):
+    if not d.getVarFlag(task, 'task', False):
         event.fire(TaskInvalid(task, d), d)
         logger.error("No such task: %s" % task)
         return 1
@@ -360,6 +412,13 @@ def _exec_task(fn, task, d, quieterr):
         nice = int(nice) - curnice
         newnice = os.nice(nice)
         logger.debug(1, "Renice to %s " % newnice)
+    ionice = localdata.getVar("BB_TASK_IONICE_LEVEL", True)
+    if ionice:
+        try:
+            cls, prio = ionice.split(".", 1)
+            bb.utils.ioprio_set(os.getpid(), int(cls), int(prio))
+        except:
+            bb.warn("Invalid ionice level %s" % ionice)
 
     bb.utils.mkdirhier(tempdir)
 
@@ -395,7 +454,10 @@ def _exec_task(fn, task, d, quieterr):
             self.triggered = False
             logging.Handler.__init__(self, logging.ERROR)
         def emit(self, record):
-            self.triggered = True
+            if getattr(record, 'forcelog', False):
+                self.triggered = False
+            else:
+                self.triggered = True
 
     # Handle logfiles
     si = open('/dev/null', 'r')
@@ -470,7 +532,7 @@ def _exec_task(fn, task, d, quieterr):
             bb.utils.remove(loglink)
     event.fire(TaskSucceeded(task, logfn, localdata), localdata)
 
-    if not localdata.getVarFlag(task, 'nostamp') and not localdata.getVarFlag(task, 'selfstamp'):
+    if not localdata.getVarFlag(task, 'nostamp', False) and not localdata.getVarFlag(task, 'selfstamp', False):
         make_stamp(task, localdata)
 
     return 0
@@ -478,7 +540,7 @@ def _exec_task(fn, task, d, quieterr):
 def exec_task(fn, task, d, profile = False):
     try:
         quieterr = False
-        if d.getVarFlag(task, "quieterrors") is not None:
+        if d.getVarFlag(task, "quieterrors", False) is not None:
             quieterr = True
 
         if profile:
@@ -519,10 +581,10 @@ def stamp_internal(taskname, d, file_name, baseonly=False):
         taskflagname = taskname.replace("_setscene", "")
 
     if file_name:
-        stamp = d.stamp_base[file_name].get(taskflagname) or d.stamp[file_name]
+        stamp = d.stamp[file_name]
         extrainfo = d.stamp_extrainfo[file_name].get(taskflagname) or ""
     else:
-        stamp = d.getVarFlag(taskflagname, 'stamp-base', True) or d.getVar('STAMP', True)
+        stamp = d.getVar('STAMP', True)
         file_name = d.getVar('BB_FILENAME', True)
         extrainfo = d.getVarFlag(taskflagname, 'stamp-extra-info', True) or ""
 
@@ -535,7 +597,7 @@ def stamp_internal(taskname, d, file_name, baseonly=False):
     stamp = bb.parse.siggen.stampfile(stamp, file_name, taskname, extrainfo)
 
     stampdir = os.path.dirname(stamp)
-    if bb.parse.cached_mtime_noerror(stampdir) == 0:
+    if cached_mtime_noerror(stampdir) == 0:
         bb.utils.mkdirhier(stampdir)
 
     return stamp
@@ -553,10 +615,10 @@ def stamp_cleanmask_internal(taskname, d, file_name):
         taskflagname = taskname.replace("_setscene", "")
 
     if file_name:
-        stamp = d.stamp_base_clean[file_name].get(taskflagname) or d.stampclean[file_name]
+        stamp = d.stampclean[file_name]
         extrainfo = d.stamp_extrainfo[file_name].get(taskflagname) or ""
     else:
-        stamp = d.getVarFlag(taskflagname, 'stamp-base-clean', True) or d.getVar('STAMPCLEAN', True)
+        stamp = d.getVar('STAMPCLEAN', True)
         file_name = d.getVar('BB_FILENAME', True)
         extrainfo = d.getVarFlag(taskflagname, 'stamp-extra-info', True) or ""
 
@@ -630,8 +692,8 @@ def stampfile(taskname, d, file_name = None):
     """
     return stamp_internal(taskname, d, file_name)
 
-def add_tasks(tasklist, deltasklist, d):
-    task_deps = d.getVar('_task_deps')
+def add_tasks(tasklist, d):
+    task_deps = d.getVar('_task_deps', False)
     if not task_deps:
         task_deps = {}
     if not 'tasks' in task_deps:
@@ -641,9 +703,6 @@ def add_tasks(tasklist, deltasklist, d):
 
     for task in tasklist:
         task = d.expand(task)
-
-        if task in deltasklist:
-            continue
 
         d.setVarFlag(task, 'task', 1)
 
@@ -681,12 +740,12 @@ def addtask(task, before, after, d):
         task = "do_" + task
 
     d.setVarFlag(task, "task", 1)
-    bbtasks = d.getVar('__BBTASKS') or []
-    if not task in bbtasks:
+    bbtasks = d.getVar('__BBTASKS', False) or []
+    if task not in bbtasks:
         bbtasks.append(task)
     d.setVar('__BBTASKS', bbtasks)
 
-    existing = d.getVarFlag(task, "deps") or []
+    existing = d.getVarFlag(task, "deps", False) or []
     if after is not None:
         # set up deps for function
         for entry in after.split():
@@ -696,7 +755,7 @@ def addtask(task, before, after, d):
     if before is not None:
         # set up things that depend on this func
         for entry in before.split():
-            existing = d.getVarFlag(entry, "deps") or []
+            existing = d.getVarFlag(entry, "deps", False) or []
             if task not in existing:
                 d.setVarFlag(entry, "deps", [task] + existing)
 
@@ -704,8 +763,14 @@ def deltask(task, d):
     if task[:3] != "do_":
         task = "do_" + task
 
-    bbtasks = d.getVar('__BBDELTASKS') or []
-    if not task in bbtasks:
-        bbtasks.append(task)
-    d.setVar('__BBDELTASKS', bbtasks)
+    bbtasks = d.getVar('__BBTASKS', False) or []
+    if task in bbtasks:
+        bbtasks.remove(task)
+        d.setVar('__BBTASKS', bbtasks)
 
+    d.delVarFlag(task, 'deps')
+    for bbtask in d.getVar('__BBTASKS', False) or []:
+        deps = d.getVarFlag(bbtask, 'deps', False) or []
+        if task in deps:
+            deps.remove(task)
+            d.setVarFlag(bbtask, 'deps', deps)

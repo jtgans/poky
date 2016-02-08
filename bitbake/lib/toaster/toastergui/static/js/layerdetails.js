@@ -1,4 +1,4 @@
-"use strict"
+"use strict";
 
 function layerDetailsPageInit (ctx) {
 
@@ -7,12 +7,44 @@ function layerDetailsPageInit (ctx) {
   var layerDepsList = $("#layer-deps-list");
   var currentLayerDepSelection;
   var addRmLayerBtn = $("#add-remove-layer-btn");
+  var targetTab = $("#targets-tab");
+  var machineTab = $("#machines-tab");
+  var detailsTab = $("#details-tab");
 
   /* setup the dependencies typeahead */
-  libtoaster.makeTypeahead(layerDepInput, ctx.xhrDataTypeaheadUrl, { type : "layers", project_id: ctx.projectId, include_added: "true" }, function(item){
+  libtoaster.makeTypeahead(layerDepInput, libtoaster.ctx.layersTypeAheadUrl, { include_added: "true" }, function(item){
     currentLayerDepSelection = item;
 
     layerDepBtn.removeAttr("disabled");
+  });
+
+  $(window).on('hashchange', function(e){
+    switch(window.location.hash){
+      case '#machines':
+        machineTab.tab('show');
+        break;
+      case '#recipes':
+        targetTab.tab('show');
+        break;
+      default:
+        detailsTab.tab('show');
+        break;
+    }
+  });
+
+
+  $(".breadcrumb li:first a").click(function(e){
+    e.preventDefault();
+    /* By default this link goes to the project configuration page. However
+     * if we have some builds we go there instead of the default href
+     */
+    libtoaster.getProjectInfo(libtoaster.ctx.projectPageUrl, function(prjInfo){
+      if (prjInfo.builds && prjInfo.builds.length > 0) {
+        window.location.replace(libtoaster.ctx.projectBuildsUrl);
+      } else {
+        window.location.replace(libtoaster.ctx.projectPageUrl);
+      }
+    });
   });
 
   function addRemoveDep(depLayerId, add, doneCb) {
@@ -41,7 +73,7 @@ function layerDetailsPageInit (ctx) {
     });
   }
 
-  function layerRemoveClick() {
+  function layerDepRemoveClick() {
     var toRemove = $(this).parent().data('layer-id');
     var layerDepItem = $(this);
 
@@ -54,7 +86,7 @@ function layerDetailsPageInit (ctx) {
 
   /* Add dependency layer button click handler */
   layerDepBtn.click(function(){
-    if (currentLayerDepSelection == undefined)
+    if (currentLayerDepSelection === undefined)
       return;
 
     addRemoveDep(currentLayerDepSelection.id, true, function(){
@@ -65,13 +97,13 @@ function layerDetailsPageInit (ctx) {
       newLayerDep.children("span").tooltip();
 
       var link = newLayerDep.children("a");
-      link.attr("href", ctx.layerDetailsUrl+String(currentLayerDepSelection.id));
+      link.attr("href", currentLayerDepSelection.layerdetailurl);
       link.text(currentLayerDepSelection.name);
       link.tooltip({title: currentLayerDepSelection.tooltip, placement: "right"});
 
       /* Connect up the tash icon */
       var trashItem = newLayerDep.children("span");
-      trashItem.click(layerRemoveClick);
+      trashItem.click(layerDepRemoveClick);
 
       layerDepsList.append(newLayerDep);
       /* Clear the current selection */
@@ -122,21 +154,6 @@ function layerDetailsPageInit (ctx) {
     });
   });
 
-  $(".build-target-btn").click(function(){
-    /* fire a build */
-    var target = $(this).data('target-name');
-    libtoaster.startABuild(ctx.projectBuildUrl, ctx.projectId, target, null, null);
-    window.location.replace(ctx.projectPageUrl);
-  });
-
-  $(".select-machine-btn").click(function(){
-    var data =  { machineName : $(this).data('machine-name') };
-    libtoaster.editProject(ctx.xhrEditProjectUrl, ctx.projectId, data,
-      function (){
-        window.location.replace(ctx.projectPageUrl+"#/machineselected");
-    }, null);
-  });
-
   function defaultAddBtnText(){
       var text = " Add the "+ctx.layerVersion.name+" layer to your project";
       addRmLayerBtn.text(text);
@@ -144,7 +161,7 @@ function layerDetailsPageInit (ctx) {
       addRmLayerBtn.removeClass("btn-danger");
   }
 
-  $("#details-tab").on('show', function(){
+  detailsTab.on('show', function(){
     if (!ctx.layerVersion.inCurrentPrj)
       defaultAddBtnText();
 
@@ -155,7 +172,7 @@ function layerDetailsPageInit (ctx) {
     if (!ctx.layerVersion.inCurrentPrj){
       if (ctx.numTargets > 0) {
         var text = " Add the "+ctx.layerVersion.name+" layer to your project "+
-          "to enable these targets";
+          "to enable these recipes";
         addRmLayerBtn.text(text);
         addRmLayerBtn.prepend("<span class=\"icon-plus\"></span>");
       } else {
@@ -163,10 +180,47 @@ function layerDetailsPageInit (ctx) {
       }
     }
 
-    window.location.hash = "targets";
+    window.location.hash = "recipes";
   }
 
-  $("#targets-tab").on('show', targetsTabShow);
+  $("#recipestable").on('table-done', function(e, total, tableParams){
+    ctx.numTargets = total;
+
+    if (total === 0 && !tableParams.search) {
+      $("#no-recipes-yet").show();
+    } else {
+      $("#no-recipes-yet").hide();
+    }
+
+    targetTab.removeClass("muted");
+    if (window.location.hash === "#recipes"){
+      /* re run the machinesTabShow to update the text */
+      targetsTabShow();
+    }
+  });
+
+  $("#machinestable").on('table-done', function(e, total, tableParams){
+    ctx.numMachines = total;
+
+    if (total === 0 && !tableParams.search)
+      $("#no-machines-yet").show();
+    else
+      $("#no-machines-yet").hide();
+
+    machineTab.removeClass("muted");
+    if (window.location.hash === "#machines"){
+      /* re run the machinesTabShow to update the text */
+      machinesTabShow();
+    }
+
+    $(".select-machine-btn").click(function(e){
+      if ($(this).attr("disabled") === "disabled")
+        e.preventDefault();
+    });
+
+  });
+
+  targetTab.on('show', targetsTabShow);
 
   function machinesTabShow(){
     if (!ctx.layerVersion.inCurrentPrj) {
@@ -183,7 +237,7 @@ function layerDetailsPageInit (ctx) {
     window.location.hash = "machines";
   }
 
-  $("#machines-tab").on('show', machinesTabShow);
+  machineTab.on('show', machinesTabShow);
 
   $(".pagesize").change(function(){
     var search = libtoaster.parseUrlParams();
@@ -195,43 +249,21 @@ function layerDetailsPageInit (ctx) {
   /* Enables the Build target and Select Machine buttons and switches the
    * add/remove button
    */
-  function setLayerInCurrentPrj(added, depsList) {
+  function setLayerInCurrentPrj(added) {
     ctx.layerVersion.inCurrentPrj = added;
-    var alertMsg = $("#alert-msg");
-    /* Reset alert message */
-    alertMsg.text("");
 
     if (added){
       /* enable and switch all the button states */
-      $(".build-target-btn").removeAttr("disabled");
+      $(".build-recipe-btn").removeAttr("disabled");
       $(".select-machine-btn").removeAttr("disabled");
       addRmLayerBtn.addClass("btn-danger");
       addRmLayerBtn.data('directive', "remove");
       addRmLayerBtn.text(" Delete the "+ctx.layerVersion.name+" layer from your project");
       addRmLayerBtn.prepend("<span class=\"icon-trash\"></span>");
 
-      if (depsList) {
-        alertMsg.append("You have added <strong>"+(depsList.length+1)+"</strong> layers to <a id=\"project-affected-name\"></a>: <span id=\"layer-affected-name\"></span> and its dependencies ");
-
-        /* Build the layer deps list */
-        depsList.map(function(layer, i){
-          var link = $("<a></a>");
-
-          link.attr("href", layer.layerdetailurl);
-          link.text(layer.name);
-          link.tooltip({title: layer.tooltip});
-
-          if (i != 0)
-            alertMsg.append(", ");
-
-          alertMsg.append(link);
-        });
-      } else {
-        alertMsg.append("You have added <strong>1</strong> layer to <a id=\"project-affected-name\"></a>: <span id=\"layer-affected-name\"></span>");
-      }
     } else {
       /* disable and switch all the button states */
-      $(".build-target-btn").attr("disabled","disabled");
+      $(".build-recipe-btn").attr("disabled","disabled");
       $(".select-machine-btn").attr("disabled", "disabled");
       addRmLayerBtn.removeClass("btn-danger");
       addRmLayerBtn.data('directive', "add");
@@ -251,55 +283,26 @@ function layerDetailsPageInit (ctx) {
           defaultAddBtnText();
           break;
       }
-
-      alertMsg.append("You have deleted <strong>1</strong> layer from <a id=\"project-affected-name\"></a>: <strong id=\"layer-affected-name\"></strong>");
     }
-
-    alertMsg.children("#layer-affected-name").text(ctx.layerVersion.name);
-    alertMsg.children("#project-affected-name").text(ctx.projectName);
-    alertMsg.children("#project-affected-name").attr("href", ctx.projectPageUrl);
-    $("#alert-area").show();
   }
 
-  $("#dismiss-alert").click(function(){ $(this).parent().hide() });
+  $("#dismiss-alert").click(function(){
+    $(this).parent().fadeOut();
+  });
 
   /* Add or remove this layer from the project */
   addRmLayerBtn.click(function() {
-    var directive = $(this).data('directive');
 
-    if (directive == 'add') {
-      /* If adding get the deps for this layer */
-      libtoaster.getLayerDepsForProject(ctx.xhrDataTypeaheadUrl, ctx.projectId, ctx.layerVersion.id, function (data) {
-        /* got result for dependencies */
-        if (data.list.length == 0){
-          var editData = { layerAdd : ctx.layerVersion.id };
-          libtoaster.editProject(ctx.xhrEditProjectUrl, ctx.projectId, editData,
-            function() {
-              setLayerInCurrentPrj(true);
-          });
-          return;
-        } else {
-          /* The add deps will include this layer so no need to add it
-           * separately.
-           */
-          show_layer_deps_modal(ctx.projectId, ctx.layerVersion, data.list, null, null, true, function () {
-            /* Success add deps and layer */
-            setLayerInCurrentPrj(true, data.list);
-          });
-        }
-      }, null);
-    } else if (directive == 'remove') {
-      var editData = { layerDel : ctx.layerVersion.id };
+    var add = ($(this).data('directive') === "add");
 
-      libtoaster.editProject(ctx.xhrEditProjectUrl, ctx.projectId, editData,
-        function () {
-          /* Success removed layer */
-           //window.location.reload();
-           setLayerInCurrentPrj(false);
-        }, function () {
-          console.warn ("Removing layer from project failed");
-      });
-    }
+    libtoaster.addRmLayer(ctx.layerVersion, add, function (layersList){
+      var alertMsg = $("#alert-msg");
+      alertMsg.html(libtoaster.makeLayerAddRmAlertMsg(ctx.layerVersion, layersList, add));
+
+      setLayerInCurrentPrj(add);
+
+      $("#alert-area").show();
+    });
   });
 
   /* Handler for all of the Change buttons */
@@ -311,9 +314,9 @@ function layerDetailsPageInit (ctx) {
      * from.
      */
     var entryElement = mParent.find("input");
-    if (entryElement.length == 0)
+    if (entryElement.length === 0)
       entryElement = mParent.find("textarea");
-    if (entryElement.length == 0) {
+    if (entryElement.length === 0) {
       console.warn("Could not find element to get data from for this change");
       return;
     }
@@ -354,7 +357,7 @@ function layerDetailsPageInit (ctx) {
 
   /* Disable the change button when we have no data in the input */
   $("dl input, dl textarea").on("input",function() {
-    if ($(this).val().length == 0)
+    if ($(this).val().length === 0)
       $(this).parent().children(".change-btn").attr("disabled", "disabled");
     else
       $(this).parent().children(".change-btn").removeAttr("disabled");
@@ -382,6 +385,11 @@ function layerDetailsPageInit (ctx) {
     }
   });
 
+  /* Hide the right column if it contains no information */
+  if ($("dl.item-info").children(':visible').length === 0) {
+    $("dl.item-info").parent().hide();
+  }
+
   /* Clear the current search selection and reload the results */
   $(".target-search-clear").click(function(){
     $("#target-search").val("");
@@ -394,7 +402,7 @@ function layerDetailsPageInit (ctx) {
   });
 
 
-  layerDepsList.find(".icon-trash").click(layerRemoveClick);
+  layerDepsList.find(".icon-trash").click(layerDepRemoveClick);
   layerDepsList.find("a").tooltip();
   $(".icon-trash").tooltip();
   $(".commit").tooltip();

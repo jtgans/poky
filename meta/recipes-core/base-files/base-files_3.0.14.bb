@@ -13,7 +13,6 @@ LIC_FILES_CHKSUM = "file://licenses/GPL-2;md5=94d55d512a9ba36caa9b7df079bae19f"
 SRC_URI = "file://rotation \
            file://nsswitch.conf \
            file://motd \
-           file://inputrc \
            file://host.conf \
            file://profile \
            file://shells \
@@ -55,7 +54,7 @@ dirs2775-lsb = "/var/mail"
 
 volatiles = "log tmp"
 conffiles = "${sysconfdir}/debian_version ${sysconfdir}/host.conf \
-             ${sysconfdir}/inputrc ${sysconfdir}/issue /${sysconfdir}/issue.net \
+             ${sysconfdir}/issue /${sysconfdir}/issue.net \
              ${sysconfdir}/nsswitch.conf ${sysconfdir}/profile \
              ${sysconfdir}/default"
 
@@ -68,6 +67,29 @@ conffiles = "${sysconfdir}/debian_version ${sysconfdir}/host.conf \
 hostname = "${MACHINE}"
 
 BASEFILESISSUEINSTALL ?= "do_install_basefilesissue"
+
+# In previous versions of base-files, /run was a softlink to /var/run and the
+# directory was located in /var/volatlie/run.  Also, /var/lock was a softlink
+# to /var/volatile/lock which is where the real directory was located.  Now,
+# /run and /run/lock are the real directories.  If we are upgrading, we may
+# need to remove the symbolic links first before we create the directories.
+# Otherwise the directory creation will fail and we will have circular symbolic
+# links.
+# 
+pkg_preinst_${PN} () {
+    #!/bin/sh -e
+    if [ x"$D" = "x" ]; then
+        if [ -h "/var/lock" ]; then
+            # Remove the symbolic link
+            rm -f /var/lock
+        fi
+
+        if [ -h "/run" ]; then
+            # Remove the symbolic link
+            rm -f /run
+        fi
+    fi     
+}
 
 do_install () {
 	for d in ${dirs755}; do
@@ -82,6 +104,7 @@ do_install () {
 	for d in ${volatiles}; do
 		ln -sf volatile/$d ${D}${localstatedir}/$d
 	done
+
 	ln -snf ../run ${D}${localstatedir}/run
 	ln -snf ../run/lock ${D}${localstatedir}/lock
 
@@ -100,7 +123,6 @@ do_install () {
 	install -m 0644 ${WORKDIR}/shells ${D}${sysconfdir}/shells
 	install -m 0755 ${WORKDIR}/share/dot.profile ${D}${sysconfdir}/skel/.profile
 	install -m 0755 ${WORKDIR}/share/dot.bashrc ${D}${sysconfdir}/skel/.bashrc
-	install -m 0644 ${WORKDIR}/inputrc ${D}${sysconfdir}/inputrc
 	install -m 0644 ${WORKDIR}/nsswitch.conf ${D}${sysconfdir}/nsswitch.conf
 	install -m 0644 ${WORKDIR}/host.conf ${D}${sysconfdir}/host.conf
 	install -m 0644 ${WORKDIR}/motd ${D}${sysconfdir}/motd
@@ -141,6 +163,10 @@ do_install_append_linuxstdbase() {
 	for d in ${dirs2775-lsb}; do
                 install -m 2775 -d ${D}$d
         done
+}
+
+sysroot_stage_all_append () {
+	sysroot_stage_dir ${D}${sysconfdir}/skel ${SYSROOT_DESTDIR}${sysconfdir}/skel
 }
 
 PACKAGES = "${PN}-doc ${PN} ${PN}-dev ${PN}-dbg"

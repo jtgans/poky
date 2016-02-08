@@ -21,92 +21,270 @@ python write_package_manifest() {
     license_image_dir = d.expand('${LICENSE_DIRECTORY}/${IMAGE_NAME}')
     bb.utils.mkdirhier(license_image_dir)
     from oe.rootfs import image_list_installed_packages
+    from oe.utils import format_pkg_list
+
+    pkgs = image_list_installed_packages(d)
+    output = format_pkg_list(pkgs)
     open(os.path.join(license_image_dir, 'package.manifest'),
-        'w+').write(image_list_installed_packages(d))
+        'w+').write(output)
 }
 
-license_create_manifest() {
-        # Test if BUILD_IMAGES_FROM_FEEDS is defined in env
-        if [ -n "${BUILD_IMAGES_FROM_FEEDS}" ]; then
-          exit 0
-        fi
-
-	INSTALLED_PKGS=`cat ${LICENSE_DIRECTORY}/${IMAGE_NAME}/package.manifest`
-	LICENSE_MANIFEST="${LICENSE_DIRECTORY}/${IMAGE_NAME}/license.manifest"
-	# remove existing license.manifest file
-	if [ -f ${LICENSE_MANIFEST} ]; then
-		rm ${LICENSE_MANIFEST}
-	fi
-	touch ${LICENSE_MANIFEST}
-	for pkg in ${INSTALLED_PKGS}; do
-		filename=`ls ${PKGDATA_DIR}/runtime-reverse/${pkg}| head -1`
-		pkged_pn="$(sed -n 's/^PN: //p' ${filename})"
-
-		# check to see if the package name exists in the manifest. if so, bail.
-		if grep -q "^PACKAGE NAME: ${pkg}" ${LICENSE_MANIFEST}; then
-			continue
-		fi
-
-		pkged_pv="$(sed -n 's/^PV: //p' ${filename})"
-		pkged_name="$(basename $(readlink ${filename}))"
-		pkged_lic="$(sed -n "/^LICENSE_${pkged_name}: /{ s/^LICENSE_${pkged_name}: //; p }" ${filename})"
-		pkged_size="$(sed -n "/^PKGSIZE_${pkged_name}: /{ s/^PKGSIZE_${pkged_name}: //; p }" ${filename})"
-		if [ -z "${pkged_lic}" ]; then
-			# fallback checking value of LICENSE
-			pkged_lic="$(sed -n "/^LICENSE: /{ s/^LICENSE: //; p }" ${filename})"
-		fi
-
-		echo "PACKAGE NAME:" ${pkg} >> ${LICENSE_MANIFEST}
-		echo "PACKAGE VERSION:" ${pkged_pv} >> ${LICENSE_MANIFEST}
-		echo "RECIPE NAME:" ${pkged_pn} >> ${LICENSE_MANIFEST}
-		echo "LICENSE:" ${pkged_lic} >> ${LICENSE_MANIFEST}
-		echo "" >> ${LICENSE_MANIFEST}
-
-		# If the package doesn't contain any file, that is, its size is 0, the license
-		# isn't relevant as far as the final image is concerned. So doing license check
-		# doesn't make much sense, skip it.
-		if [ "$pkged_size" = "0" ]; then
-			continue
-		fi
-
-		lics="$(echo ${pkged_lic} | sed "s/[|&()*]/ /g" | sed "s/  */ /g" )"
-		for lic in ${lics}; do
-			# to reference a license file trim trailing + symbol
-			if ! [ -e "${LICENSE_DIRECTORY}/${pkged_pn}/generic_${lic%+}" ]; then
-				bbwarn "The license listed ${lic} was not in the licenses collected for ${pkged_pn}"
-			fi
-		done
-	done
-
-	# Two options here:
-	# - Just copy the manifest
-	# - Copy the manifest and the license directories
-	# With both options set we see a .5 M increase in core-image-minimal
-	if [ "${COPY_LIC_MANIFEST}" = "1" ]; then
-		mkdir -p ${IMAGE_ROOTFS}/usr/share/common-licenses/
-		cp ${LICENSE_MANIFEST} ${IMAGE_ROOTFS}/usr/share/common-licenses/license.manifest
-		if [ "${COPY_LIC_DIRS}" = "1" ]; then
-			for pkg in ${INSTALLED_PKGS}; do
-				mkdir -p ${IMAGE_ROOTFS}/usr/share/common-licenses/${pkg}
-				pkged_pn="$(oe-pkgdata-util -p ${PKGDATA_DIR} lookup-recipe ${pkg})"
-				for lic in `ls ${LICENSE_DIRECTORY}/${pkged_pn}`; do
-					# Really don't need to copy the generics as they're 
-					# represented in the manifest and in the actual pkg licenses
-					# Doing so would make your image quite a bit larger
-					if [ "${lic#generic_}" = "${lic}" ]; then
-						cp ${LICENSE_DIRECTORY}/${pkged_pn}/${lic} ${IMAGE_ROOTFS}/usr/share/common-licenses/${pkg}/${lic}
-					else
-						if [ ! -f ${IMAGE_ROOTFS}/usr/share/common-licenses/${lic} ]; then
-							cp ${LICENSE_DIRECTORY}/${pkged_pn}/${lic} ${IMAGE_ROOTFS}/usr/share/common-licenses/
-						fi
-						ln -sf ../${lic} ${IMAGE_ROOTFS}/usr/share/common-licenses/${pkg}/${lic}
-					fi
-				done
-			done
-		fi
-	fi
-
+python write_deploy_manifest() {
+    license_deployed_manifest(d)
 }
+
+python license_create_manifest() {
+    import oe.packagedata
+    from oe.rootfs import image_list_installed_packages
+
+    build_images_from_feeds = d.getVar('BUILD_IMAGES_FROM_FEEDS', True)
+    if build_images_from_feeds == "1":
+        return 0
+
+    pkg_dic = {}
+    for pkg in sorted(image_list_installed_packages(d)):
+        pkg_info = os.path.join(d.getVar('PKGDATA_DIR', True),
+                                'runtime-reverse', pkg)
+        pkg_name = os.path.basename(os.readlink(pkg_info))
+
+        pkg_dic[pkg_name] = oe.packagedata.read_pkgdatafile(pkg_info)
+        if not "LICENSE" in pkg_dic[pkg_name].keys():
+            pkg_lic_name = "LICENSE_" + pkg_name
+            pkg_dic[pkg_name]["LICENSE"] = pkg_dic[pkg_name][pkg_lic_name]
+
+    rootfs_license_manifest = os.path.join(d.getVar('LICENSE_DIRECTORY', True),
+                        d.getVar('IMAGE_NAME', True), 'license.manifest')
+    write_license_files(d, rootfs_license_manifest, pkg_dic)
+}
+
+def write_license_files(d, license_manifest, pkg_dic):
+    import re
+
+    bad_licenses = (d.getVar("INCOMPATIBLE_LICENSE", True) or "").split()
+    bad_licenses = map(lambda l: canonical_license(d, l), bad_licenses)
+    bad_licenses = expand_wildcard_licenses(d, bad_licenses)
+
+    with open(license_manifest, "w") as license_file:
+        for pkg in sorted(pkg_dic):
+            if bad_licenses:
+                try:
+                    (pkg_dic[pkg]["LICENSE"], pkg_dic[pkg]["LICENSES"]) = \
+                        oe.license.manifest_licenses(pkg_dic[pkg]["LICENSE"],
+                        bad_licenses, canonical_license, d)
+                except oe.license.LicenseError as exc:
+                    bb.fatal('%s: %s' % (d.getVar('P', True), exc))
+            else:
+                pkg_dic[pkg]["LICENSES"] = re.sub('[|&()*]', ' ', pkg_dic[pkg]["LICENSE"])
+                pkg_dic[pkg]["LICENSES"] = re.sub('  *', ' ', pkg_dic[pkg]["LICENSES"])
+                pkg_dic[pkg]["LICENSES"] = pkg_dic[pkg]["LICENSES"].split()
+
+            if not "IMAGE_MANIFEST" in pkg_dic[pkg]:
+                # Rootfs manifest
+                license_file.write("PACKAGE NAME: %s\n" % pkg)
+                license_file.write("PACKAGE VERSION: %s\n" % pkg_dic[pkg]["PV"])
+                license_file.write("RECIPE NAME: %s\n" % pkg_dic[pkg]["PN"])
+                license_file.write("LICENSE: %s\n\n" % pkg_dic[pkg]["LICENSE"])
+
+                # If the package doesn't contain any file, that is, its size is 0, the license
+                # isn't relevant as far as the final image is concerned. So doing license check
+                # doesn't make much sense, skip it.
+                if pkg_dic[pkg]["PKGSIZE_%s" % pkg] == "0":
+                    continue
+            else:
+                # Image manifest
+                license_file.write("RECIPE NAME: %s\n" % pkg_dic[pkg]["PN"])
+                license_file.write("VERSION: %s\n" % pkg_dic[pkg]["PV"])
+                license_file.write("LICENSE: %s\n" % pkg_dic[pkg]["LICENSE"])
+                license_file.write("FILES: %s\n\n" % pkg_dic[pkg]["FILES"])
+
+            for lic in pkg_dic[pkg]["LICENSES"]:
+                lic_file = os.path.join(d.getVar('LICENSE_DIRECTORY', True),
+                                        pkg_dic[pkg]["PN"], "generic_%s" % 
+                                        re.sub('\+', '', lic))
+                # add explicity avoid of CLOSED license because isn't generic
+                if lic == "CLOSED":
+                   continue
+
+                if not os.path.exists(lic_file):
+                   bb.warn("The license listed %s was not in the "\ 
+                            "licenses collected for recipe %s" 
+                            % (lic, pkg_dic[pkg]["PN"]))
+
+    # Two options here:
+    # - Just copy the manifest
+    # - Copy the manifest and the license directories
+    # With both options set we see a .5 M increase in core-image-minimal
+    copy_lic_manifest = d.getVar('COPY_LIC_MANIFEST', True)
+    copy_lic_dirs = d.getVar('COPY_LIC_DIRS', True)
+    if copy_lic_manifest == "1":
+        rootfs_license_dir = os.path.join(d.getVar('IMAGE_ROOTFS', 'True'), 
+                                'usr', 'share', 'common-licenses')
+        bb.utils.mkdirhier(rootfs_license_dir)
+        rootfs_license_manifest = os.path.join(rootfs_license_dir,
+                os.path.split(license_manifest)[1])
+        if not os.path.exists(rootfs_license_manifest):
+            os.link(license_manifest, rootfs_license_manifest)
+
+        if copy_lic_dirs == "1":
+            for pkg in sorted(pkg_dic):
+                pkg_rootfs_license_dir = os.path.join(rootfs_license_dir, pkg)
+                bb.utils.mkdirhier(pkg_rootfs_license_dir)
+                pkg_license_dir = os.path.join(d.getVar('LICENSE_DIRECTORY', True),
+                                            pkg_dic[pkg]["PN"]) 
+                licenses = os.listdir(pkg_license_dir)
+                for lic in licenses:
+                    rootfs_license = os.path.join(rootfs_license_dir, lic)
+                    pkg_license = os.path.join(pkg_license_dir, lic)
+                    pkg_rootfs_license = os.path.join(pkg_rootfs_license_dir, lic)
+
+                    if re.match("^generic_.*$", lic):
+                        generic_lic = re.search("^generic_(.*)$", lic).group(1)
+                        if oe.license.license_ok(canonical_license(d,
+                            generic_lic), bad_licenses) == False:
+                            continue
+
+                        if not os.path.exists(rootfs_license):
+                            os.link(pkg_license, rootfs_license)
+
+                        if not os.path.exists(pkg_rootfs_license):
+                            os.symlink(os.path.join('..', lic), pkg_rootfs_license)
+                    else:
+                        if (oe.license.license_ok(canonical_license(d,
+                                lic), bad_licenses) == False or
+                                os.path.exists(pkg_rootfs_license)):
+                            continue
+
+                        os.link(pkg_license, pkg_rootfs_license)
+
+
+def license_deployed_manifest(d):
+    """
+    Write the license manifest for the deployed recipes.
+    The deployed recipes usually includes the bootloader
+    and extra files to boot the target.
+    """
+
+    dep_dic = {}
+    man_dic = {}
+    lic_dir = d.getVar("LICENSE_DIRECTORY", True)
+
+    dep_dic = get_deployed_dependencies(d)
+    for dep in dep_dic.keys():
+        man_dic[dep] = {}
+        # It is necessary to mark this will be used for image manifest
+        man_dic[dep]["IMAGE_MANIFEST"] = True
+        man_dic[dep]["PN"] = dep
+        man_dic[dep]["FILES"] = \
+            " ".join(get_deployed_files(dep_dic[dep]))
+        with open(os.path.join(lic_dir, dep, "recipeinfo"), "r") as f:
+            for line in f.readlines():
+                key,val = line.split(": ", 1)
+                man_dic[dep][key] = val[:-1]
+
+    image_license_manifest = os.path.join(d.getVar('LICENSE_DIRECTORY', True),
+            d.getVar('IMAGE_NAME', True), 'image_license.manifest')
+    write_license_files(d, image_license_manifest, man_dic)
+
+def get_deployed_dependencies(d):
+    """
+    Get all the deployed dependencies of an image
+    """
+
+    deploy = {}
+    # Get all the dependencies for the current task (rootfs).
+    # Also get EXTRA_IMAGEDEPENDS because the bootloader is
+    # usually in this var and not listed in rootfs.
+    # At last, get the dependencies from boot classes because
+    # it might contain the bootloader.
+    taskdata = d.getVar("BB_TASKDEPDATA", False)
+    depends = list(set([dep[0] for dep
+                    in taskdata.itervalues()
+                    if not dep[0].endswith("-native")]))
+    extra_depends = d.getVar("EXTRA_IMAGEDEPENDS", True)
+    boot_depends = get_boot_dependencies(d)
+    depends.extend(extra_depends.split())
+    depends.extend(boot_depends)
+    depends = list(set(depends))
+
+    # To verify what was deployed it checks the rootfs dependencies against
+    # the SSTATE_MANIFESTS for "deploy" task.
+    # The manifest file name contains the arch. Because we are not running
+    # in the recipe context it is necessary to check every arch used.
+    sstate_manifest_dir = d.getVar("SSTATE_MANIFESTS", True)
+    sstate_archs = d.getVar("SSTATE_ARCHS", True)
+    extra_archs = d.getVar("PACKAGE_EXTRA_ARCHS", True)
+    archs = list(set(("%s %s" % (sstate_archs, extra_archs)).split()))
+    for dep in depends:
+        # Some recipes have an arch on their own, so we try that first.
+        special_arch = d.getVar("PACKAGE_ARCH_pn-%s" % dep, True)
+        if special_arch:
+            sstate_manifest_file = os.path.join(sstate_manifest_dir,
+                    "manifest-%s-%s.deploy" % (special_arch, dep))
+            if os.path.exists(sstate_manifest_file):
+                deploy[dep] = sstate_manifest_file
+                continue
+
+        for arch in archs:
+            sstate_manifest_file = os.path.join(sstate_manifest_dir,
+                    "manifest-%s-%s.deploy" % (arch, dep))
+            if os.path.exists(sstate_manifest_file):
+                deploy[dep] = sstate_manifest_file
+                break
+
+    return deploy
+get_deployed_dependencies[vardepsexclude] = "BB_TASKDEPDATA"
+
+def get_boot_dependencies(d):
+    """
+    Return the dependencies from boot tasks
+    """
+
+    depends = []
+    boot_depends_string = ""
+    taskdepdata = d.getVar("BB_TASKDEPDATA", False)
+    # Only bootimg and bootdirectdisk include the depends flag
+    boot_tasks = ["do_bootimg", "do_bootdirectdisk",]
+
+    for task in boot_tasks:
+        boot_depends_string = "%s %s" % (boot_depends_string,
+                d.getVarFlag(task, "depends", True) or "")
+    boot_depends = [dep.split(":")[0] for dep
+                in boot_depends_string.split()
+                if not dep.split(":")[0].endswith("-native")]
+    for dep in boot_depends:
+        info_file = os.path.join(d.getVar("LICENSE_DIRECTORY", True),
+                dep, "recipeinfo")
+        # If the recipe and dependency name is the same
+        if os.path.exists(info_file):
+            depends.append(dep)
+        # We need to search for the provider of the dependency
+        else:
+            for taskdep in taskdepdata.itervalues():
+                # The fifth field contains what the task provides
+                if dep in taskdep[4]:
+                    info_file = os.path.join(
+                            d.getVar("LICENSE_DIRECTORY", True),
+                            taskdep[0], "recipeinfo")
+                    if os.path.exists(info_file):
+                        depends.append(taskdep[0])
+                        break
+    return depends
+get_boot_dependencies[vardepsexclude] = "BB_TASKDEPDATA"
+
+def get_deployed_files(man_file):
+    """
+    Get the files deployed from the sstate manifest
+    """
+
+    dep_files = []
+    excluded_files = ["README_-_DO_NOT_DELETE_FILES_IN_THIS_DIRECTORY.txt"]
+    with open(man_file, "r") as manifest:
+        all_files = manifest.read()
+    for f in all_files.splitlines():
+        if ((not (os.path.islink(f) or os.path.isdir(f))) and
+                not os.path.basename(f) in excluded_files):
+            dep_files.append(os.path.basename(f))
+    return dep_files
 
 python do_populate_lic() {
     """
@@ -117,6 +295,10 @@ python do_populate_lic() {
     # The base directory we wrangle licenses to
     destdir = os.path.join(d.getVar('LICSSTATEDIR', True), d.getVar('PN', True))
     copy_license_files(lic_files_paths, destdir)
+    info = get_recipe_info(d)
+    with open(os.path.join(destdir, "recipeinfo"), "w") as f:
+        for key in sorted(info.keys()):
+            f.write("%s: %s\n" % (key, info[key]))
 }
 
 # it would be better to copy them in do_install_append, but find_license_filesa is python
@@ -130,12 +312,20 @@ python perform_packagecopy_prepend () {
         copy_license_files(lic_files_paths, destdir)
         add_package_and_files(d)
 }
+perform_packagecopy[vardeps] += "LICENSE_CREATE_PACKAGE"
+
+def get_recipe_info(d):
+    info = {}
+    info["PV"] = d.getVar("PV", True)
+    info["PR"] = d.getVar("PR", True)
+    info["LICENSE"] = d.getVar("LICENSE", True)
+    return info
 
 def add_package_and_files(d):
     packages = d.getVar('PACKAGES', True)
     files = d.getVar('LICENSE_FILES_DIRECTORY', True)
     pn = d.getVar('PN', True)
-    pn_lic = "%s%s" % (pn, d.getVar('LICENSE_PACKAGE_SUFFIX'))
+    pn_lic = "%s%s" % (pn, d.getVar('LICENSE_PACKAGE_SUFFIX', False))
     if pn_lic in packages:
         bb.warn("%s package already existed in %s." % (pn_lic, pn))
     else:
@@ -222,13 +412,15 @@ def find_license_files(d):
             pass
         spdx_generic = None
         license_source = None
-        # If the generic does not exist we need to check to see if there is an SPDX mapping to it
+        # If the generic does not exist we need to check to see if there is an SPDX mapping to it,
+        # unless NO_GENERIC_LICENSE is set.
+
         for lic_dir in license_source_dirs:
             if not os.path.isfile(os.path.join(lic_dir, license_type)):
-                if d.getVarFlag('SPDXLICENSEMAP', license_type) != None:
+                if d.getVarFlag('SPDXLICENSEMAP', license_type, True) != None:
                     # Great, there is an SPDXLICENSEMAP. We can copy!
                     bb.debug(1, "We need to use a SPDXLICENSEMAP for %s" % (license_type))
-                    spdx_generic = d.getVarFlag('SPDXLICENSEMAP', license_type)
+                    spdx_generic = d.getVarFlag('SPDXLICENSEMAP', license_type, True)
                     license_source = lic_dir
                     break
             elif os.path.isfile(os.path.join(lic_dir, license_type)):
@@ -241,9 +433,24 @@ def find_license_files(d):
             # audit up. This should be fixed in emit_pkgdata (or, we actually got and fix all the recipes)
 
             lic_files_paths.append(("generic_" + license_type, os.path.join(license_source, spdx_generic)))
+
+            # The user may attempt to use NO_GENERIC_LICENSE for a generic license which doesn't make sense
+            # and should not be allowed, warn the user in this case.
+            if d.getVarFlag('NO_GENERIC_LICENSE', license_type, True):
+                bb.warn("%s: %s is a generic license, please don't use NO_GENERIC_LICENSE for it." % (pn, license_type))
+
+        elif d.getVarFlag('NO_GENERIC_LICENSE', license_type, True):
+            # if NO_GENERIC_LICENSE is set, we copy the license files from the fetched source
+            # of the package rather than the license_source_dirs.
+            for (basename, path) in lic_files_paths:
+                if d.getVarFlag('NO_GENERIC_LICENSE', license_type, True) == basename:
+                    lic_files_paths.append(("generic_" + license_type, path))
+                    break
         else:
-            # And here is where we warn people that their licenses are lousy
-            bb.warn("%s: No generic license file exists for: %s in any provider" % (pn, license_type))
+            # Add explicity avoid of CLOSED license because this isn't generic
+            if license_type != 'CLOSED':
+                # And here is where we warn people that their licenses are lousy
+                bb.warn("%s: No generic license file exists for: %s in any provider" % (pn, license_type))
             pass
 
     if not generic_directory:
@@ -304,9 +511,9 @@ def expand_wildcard_licenses(d, wildcard_licenses):
     spdxmapkeys = d.getVarFlags('SPDXLICENSEMAP').keys()
     for wld_lic in wildcard_licenses:
         spdxflags = fnmatch.filter(spdxmapkeys, wld_lic)
-        licenses += [d.getVarFlag('SPDXLICENSEMAP', flag) for flag in spdxflags]
+        licenses += [d.getVarFlag('SPDXLICENSEMAP', flag, True) for flag in spdxflags]
 
-    spdx_lics = (d.getVar('SRC_DISTRIBUTE_LICENSES') or '').split()
+    spdx_lics = (d.getVar('SRC_DISTRIBUTE_LICENSES', False) or '').split()
     for wld_lic in wildcard_licenses:
         licenses += fnmatch.filter(spdx_lics, wld_lic)
 
@@ -325,36 +532,23 @@ def incompatible_license(d, dont_want_licenses, package=None):
     take into consideration 'or' operand.  dont_want_licenses should be passed
     as canonical (SPDX) names.
     """
-    import re
     import oe.license
-    from fnmatch import fnmatchcase as fnmatch
     license = d.getVar("LICENSE_%s" % package, True) if package else None
     if not license:
         license = d.getVar('LICENSE', True)
 
-    def license_ok(license):
-        for dwl in dont_want_licenses:
-            # If you want to exclude license named generically 'X', we
-            # surely want to exclude 'X+' as well.  In consequence, we
-            # will exclude a trailing '+' character from LICENSE in
-            # case INCOMPATIBLE_LICENSE is not a 'X+' license.
-            lic = license
-            if not re.search('\+$', dwl):
-                lic = re.sub('\+', '', license)
-            if fnmatch(lic, dwl):
-                return False
-        return True
-
     # Handles an "or" or two license sets provided by
     # flattened_licenses(), pick one that works if possible.
     def choose_lic_set(a, b):
-        return a if all(license_ok(lic) for lic in a) else b
+        return a if all(oe.license.license_ok(canonical_license(d, lic), 
+                            dont_want_licenses) for lic in a) else b
 
     try:
         licenses = oe.license.flattened_licenses(license, choose_lic_set)
     except oe.license.LicenseError as exc:
         bb.fatal('%s: %s' % (d.getVar('P', True), exc))
-    return any(not license_ok(canonical_license(d, l)) for l in licenses)
+    return any(not oe.license.license_ok(canonical_license(d, l), \
+		dont_want_licenses) for l in licenses)
 
 def check_license_flags(d):
     """
@@ -444,7 +638,8 @@ SSTATETASKS += "do_populate_lic"
 do_populate_lic[sstate-inputdirs] = "${LICSSTATEDIR}"
 do_populate_lic[sstate-outputdirs] = "${LICENSE_DIRECTORY}/"
 
-ROOTFS_POSTPROCESS_COMMAND_prepend = "write_package_manifest; license_create_manifest; "
+ROOTFS_POSTPROCESS_COMMAND_prepend = "write_package_manifest; write_deploy_manifest; license_create_manifest; "
+do_rootfs[recrdeptask] += "do_populate_lic"
 
 do_populate_lic_setscene[dirs] = "${LICSSTATEDIR}/${PN}"
 do_populate_lic_setscene[cleandirs] = "${LICSSTATEDIR}"

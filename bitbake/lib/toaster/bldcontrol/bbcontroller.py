@@ -52,6 +52,12 @@ class BitbakeController(object):
     def setVariable(self, name, value):
         return self._runCommand(["setVariable", name, value])
 
+    def getVariable(self, name):
+        return self._runCommand(["getVariable", name])
+
+    def triggerEvent(self, event):
+        return self._runCommand(["triggerEvent", event])
+
     def build(self, targets, task = None):
         if task is None:
             task = "build"
@@ -127,12 +133,6 @@ class BuildEnvironmentController(object):
         bblayerconffile.write("# line added by toaster build control\nBBLAYERS = \"" + " ".join(layerlist) + "\"")
         bblayerconffile.close()
 
-
-    def writeConfFile(self, variable_list = None, raw = None):
-        """ Writes a configuration file in the build directory. Override with buildenv-specific implementation. """
-        raise Exception("FIXME: Must override to actually write a configuration file")
-
-
     def startBBServer(self):
         """ Starts a  BB server with Toaster toasterui set up to record the builds, an no controlling UI.
             After this method executes, self.be bbaddress/bbport MUST point to a running and free server,
@@ -140,17 +140,11 @@ class BuildEnvironmentController(object):
         """
         raise Exception("FIXME: Must override in order to actually start the BB server")
 
-    def stopBBServer(self):
-        """ Stops the currently running BB server.
-            The bbstate MUST be updated to "stopped".
-            self.connection must be none.
-        """
-        raise Exception("FIXME: Must override stoBBServer")
 
-    def setLayers(self, bbs, ls):
+    def setLayers(self, bitbake, ls):
         """ Checks-out bitbake executor and layers from git repositories.
             Sets the layer variables in the config file, after validating local layer paths.
-            The bitbakes must be a 1-length list of BRBitbake
+            bitbake must be a single BRBitbake instance
             The layer paths must be in a list of BRLayer object
 
             a word of attention: by convention, the first layer for any build will be poky!
@@ -177,7 +171,7 @@ class BuildEnvironmentController(object):
 
         return BitbakeController(self.connection)
 
-    def getArtifact(path):
+    def getArtifact(self, path):
         """ This call returns an artifact identified by the 'path'. How 'path' is interpreted as
             up to the implementing BEC. The return MUST be a REST URL where a GET will actually return
             the content of the artifact, e.g. for use as a "download link" in a web UI.
@@ -188,6 +182,9 @@ class BuildEnvironmentController(object):
         """ This stops the server and releases any resources. After this point, all resources
             are un-available for further reference
         """
+        raise Exception("Must override BE release")
+
+    def triggerBuild(self, bitbake, layers, variables, targets):
         raise Exception("Must override BE release")
 
 class ShellCmdException(Exception):

@@ -7,7 +7,7 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=59530bdf33659b29e73d4adb9f9f6552 \
                     file://src/gseal-gtk-compat.h;endline=21;md5=46922c8691f58d124f9420fe16149ce2"
 
 SECTION = "x11"
-DEPENDS = "gtk+ startup-notification libfm intltool-native"
+DEPENDS = "gtk+ startup-notification libfm intltool-native gettext-native"
 DEPENDS_append_poky = " libowl"
 
 
@@ -23,7 +23,12 @@ SRC_URI = "${SOURCEFORGE_MIRROR}/pcmanfm/pcmanfm-${PV}.tar.xz \
 SRC_URI[md5sum] = "c993402d407b0a3fc076f842ac1bc5c9"
 SRC_URI[sha256sum] = "cfa8d82fc63be147045174bef074807e1e32ce8c6bf4dbd8fad49e260bcf6380"
 
-inherit autotools pkgconfig
+UPSTREAM_CHECK_URI = "http://sourceforge.net/projects/pcmanfm/files/PCManFM%20%2B%20Libfm%20%28tarball%20release%29/PCManFM/"
+
+inherit autotools pkgconfig distro_features_check
+
+# The startup-notification requires x11 in DISTRO_FEATURES
+REQUIRED_DISTRO_FEATURES = "x11"
 
 do_install_append () {
 	install -d ${D}/${datadir}
@@ -33,3 +38,5 @@ do_install_append () {
 }
 
 FILES_${PN} += "${libdir}/pcmanfm"
+
+RRECOMMENDS_${PN} += "adwaita-icon-theme"

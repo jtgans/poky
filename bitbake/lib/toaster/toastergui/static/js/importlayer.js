@@ -16,9 +16,7 @@ function importLayerPageInit (ctx) {
   var currentLayerDepSelection;
   var validLayerName = /^(\w|-)+$/;
 
-  $("#new-project-button").hide();
-
-  libtoaster.makeTypeahead(layerDepInput, ctx.xhrDataTypeaheadUrl, { type : "layers", project_id: ctx.projectId, include_added: "true" }, function(item){
+  libtoaster.makeTypeahead(layerDepInput, libtoaster.ctx.layersTypeAheadUrl, { include_added: "true" }, function(item){
     currentLayerDepSelection = item;
 
     layerDepBtn.removeAttr("disabled");
@@ -28,9 +26,11 @@ function importLayerPageInit (ctx) {
   /* We automatically add "openembedded-core" layer for convenience as a
    * dependency as pretty much all layers depend on this one
    */
-  $.getJSON(ctx.xhrDataTypeaheadUrl, { type : "layers", project_id: ctx.projectId, include_added: "true" , value: "openembedded-core" }, function(layer) {
-    if (layer.list.length == 1) {
-      currentLayerDepSelection = layer.list[0];
+  $.getJSON(libtoaster.ctx.layersTypeAheadUrl,
+    { include_added: "true" , search: "openembedded-core" },
+    function(layer) {
+    if (layer.results.length > 0) {
+      currentLayerDepSelection = layer.results[0];
       layerDepBtn.click();
     }
   });
@@ -48,7 +48,7 @@ function importLayerPageInit (ctx) {
     newLayerDep.children("span").tooltip();
 
     var link = newLayerDep.children("a");
-    link.attr("href", ctx.layerDetailsUrl+String(currentLayerDepSelection.id));
+    link.attr("href", currentLayerDepSelection.layerdetailurl);
     link.text(currentLayerDepSelection.name);
     link.tooltip({title: currentLayerDepSelection.tooltip, placement: "right"});
 
@@ -63,11 +63,11 @@ function importLayerPageInit (ctx) {
 
     $("#layer-deps-list").append(newLayerDep);
 
-    libtoaster.getLayerDepsForProject(ctx.xhrDataTypeaheadUrl, ctx.projectId, currentLayerDepSelection.id, function (data){
+    libtoaster.getLayerDepsForProject(currentLayerDepSelection.layerdetailurl, function (data){
         /* These are the dependencies of the layer added as a dependency */
         if (data.list.length > 0) {
-          currentLayerDepSelection.url = ctx.layerDetailsUrl+currentLayerDepSelection.id;
-          layerDeps[currentLayerDepSelection.id].deps = data.list
+          currentLayerDepSelection.url = currentLayerDepSelection.layerdetailurl;
+          layerDeps[currentLayerDepSelection.id].deps = data.list;
         }
 
         /* Clear the current selection */
@@ -117,10 +117,10 @@ function importLayerPageInit (ctx) {
       var body = "<strong>"+layer.name+"</strong>'s dependencies ("+
         depNames.join(", ")+"</span>) require some layers that are not added to your project. Select the ones you want to add:</p>";
 
-      show_layer_deps_modal(ctx.projectId, layer, depDepsArray, title, body, false, function(selected){
-        /* Add the accepted dependencies to the allDeps array */
-        if (selected.length > 0){
-          allDeps = allDeps.concat (selected);
+      showLayerDepsModal(layer, depDepsArray, title, body, false, function(layerObsList){
+        /* Add the accepted layer dependencies' ids to the allDeps array */
+        for (var key in layerObsList){
+          allDeps.push(layerObsList[key].id);
         }
         import_and_add ();
       });
@@ -137,7 +137,7 @@ function importLayerPageInit (ctx) {
         vcs_url: vcsURLInput.val(),
         git_ref: gitRefInput.val(),
         dir_path: $("#layer-subdir").val(),
-        project_id: ctx.projectId,
+        project_id: libtoaster.ctx.projectId,
         layer_deps: layerDepsCsv,
       };
 
@@ -152,7 +152,7 @@ function importLayerPageInit (ctx) {
             } else {
               /* Success layer import now go to the project page */
               $.cookie('layer-imported-alert', JSON.stringify(data), { path: '/'});
-              window.location.replace(ctx.projectPageUrl+'#/layerimported');
+              window.location.replace(libtoaster.ctx.projectPageUrl+'?notify=layer-imported');
             }
           },
           error: function (data) {
@@ -195,8 +195,8 @@ function importLayerPageInit (ctx) {
     var dupLayerInfo = $("#duplicate-layer-info");
     dupLayerInfo.find(".dup-layer-name").text(layer.name);
     dupLayerInfo.find(".dup-layer-link").attr("href", layer.layerdetailurl);
-    dupLayerInfo.find("#dup-layer-vcs-url").text(layer.giturl);
-    dupLayerInfo.find("#dup-layer-revision").text(layer.revision);
+    dupLayerInfo.find("#dup-layer-vcs-url").text(layer.vcs_url);
+    dupLayerInfo.find("#dup-layer-revision").text(layer.vcs_reference);
 
     $(".fields-apart-from-layer-name").fadeOut(function(){
 
@@ -211,16 +211,17 @@ function importLayerPageInit (ctx) {
       var name = $(this).val();
 
       /* Check if the layer name exists */
-      $.getJSON(ctx.xhrDataTypeaheadUrl, { type : "layers", project_id: ctx.projectId, include_added: "true" , value: name }, function(layer) {
-      if (layer.list.length > 0) {
-        for (var i in layer.list){
-          if (layer.list[i].name == name) {
-            console.log(layer.list[i])
-            layerExistsError(layer.list[i]);
+      $.getJSON(libtoaster.ctx.layersTypeAheadUrl,
+        { include_added: "true" , search: name, format: "json" },
+        function(layer) {
+          if (layer.results.length > 0) {
+            for (var i in layer.results){
+              if (layer.results[i].name == name) {
+                layerExistsError(layer.results[i]);
+              }
+            }
           }
-        }
-      }
-    });
+      });
   });
 
   vcsURLInput.on('input', function() {

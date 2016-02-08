@@ -16,17 +16,20 @@
 #
 
 import os
-import re
 
 from wic import msger
 from wic.pluginbase import SourcePlugin
-from wic.utils.oe.misc import *
+from wic.utils.oe.misc import exec_cmd, get_bitbake_var
 
 class RawCopyPlugin(SourcePlugin):
+    """
+    Populate partition content from raw image file.
+    """
+
     name = 'rawcopy'
 
     @classmethod
-    def do_install_disk(self, disk, disk_name, cr, workdir, oe_builddir,
+    def do_install_disk(cls, disk, disk_name, cr, workdir, oe_builddir,
                         bootimg_dir, kernel_dir, native_sysroot):
         """
         Called after all partitions have been prepared and assembled into a
@@ -35,7 +38,7 @@ class RawCopyPlugin(SourcePlugin):
         pass
 
     @classmethod
-    def do_configure_partition(self, part, source_params, cr, cr_workdir,
+    def do_configure_partition(cls, part, source_params, cr, cr_workdir,
                                oe_builddir, bootimg_dir, kernel_dir,
                                native_sysroot):
         """
@@ -45,7 +48,7 @@ class RawCopyPlugin(SourcePlugin):
         pass
 
     @classmethod
-    def do_prepare_partition(self, part, source_params, cr, cr_workdir,
+    def do_prepare_partition(cls, part, source_params, cr, cr_workdir,
                              oe_builddir, bootimg_dir, kernel_dir,
                              rootfs_dir, native_sysroot):
         """
@@ -59,25 +62,26 @@ class RawCopyPlugin(SourcePlugin):
 
         msger.debug('Bootimg dir: %s' % bootimg_dir)
 
-        if ('file' not in source_params):
+        if 'file' not in source_params:
             msger.error("No file specified\n")
             return
 
         src = os.path.join(bootimg_dir, source_params['file'])
-        dst = src
+        dst = os.path.join(cr_workdir, source_params['file'])
 
-        if ('skip' in source_params):
-            dst = os.path.join(cr_workdir, source_params['file'])
+        if 'skip' in source_params:
             dd_cmd = "dd if=%s of=%s ibs=%s skip=1 conv=notrunc" % \
                     (src, dst, source_params['skip'])
-            exec_cmd(dd_cmd)
+        else:
+            dd_cmd = "cp %s %s" % (src, dst)
+        exec_cmd(dd_cmd)
 
         # get the size in the right units for kickstart (kB)
         du_cmd = "du -Lbks %s" % dst
         out = exec_cmd(du_cmd)
         filesize = out.split()[0]
 
-        if filesize > part.size:
+        if int(filesize) > int(part.size):
             part.size = filesize
 
         part.source_file = dst

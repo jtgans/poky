@@ -17,15 +17,20 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 from django.conf.urls import patterns, include, url
-from django.views.generic import RedirectView
+from django.views.generic import RedirectView, TemplateView
 
 from django.http import HttpResponseBadRequest
+from toastergui import tables
+from toastergui import typeaheads
 
 urlpatterns = patterns('toastergui.views',
         # landing page
         url(r'^landing/$', 'landing', name='landing'),
 
-        url(r'^builds/$', 'builds', name='all-builds'),
+        url(r'^builds/$',
+            tables.AllBuildsTable.as_view(template_name="builds-toastertable.html"),
+            name='all-builds'),
+
         # build info navigation
         url(r'^build/(?P<build_id>\d+)$', 'builddashboard', name="builddashboard"),
 
@@ -53,10 +58,9 @@ urlpatterns = patterns('toastergui.views',
         # images are known as targets in the internal model
         url(r'^build/(?P<build_id>\d+)/target/(?P<target_id>\d+)$', 'target', name='target'),
         url(r'^build/(?P<build_id>\d+)/target/(?P<target_id>\d+)/targetpkg$', 'targetpkg', name='targetpkg'),
-        url(r'^dentries/build/(?P<build_id>\d+)/target/(?P<target_id>\d+)$', 'dirinfo_ajax', name='dirinfo_ajax'),
+        url(r'^dentries/build/(?P<build_id>\d+)/target/(?P<target_id>\d+)$', 'xhr_dirinfo', name='dirinfo_ajax'),
         url(r'^build/(?P<build_id>\d+)/target/(?P<target_id>\d+)/dirinfo$', 'dirinfo', name='dirinfo'),
         url(r'^build/(?P<build_id>\d+)/target/(?P<target_id>\d+)/dirinfo_filepath/_(?P<file_path>(?:/[^/\n]+)*)$', 'dirinfo', name='dirinfo_filepath'),
-        url(r'^build/(?P<build_id>\d+)/target/(?P<target_id>\d+)/packages$', 'tpackage', name='targetpackages'),
         url(r'^build/(?P<build_id>\d+)/configuration$', 'configuration', name='configuration'),
         url(r'^build/(?P<build_id>\d+)/configvars$', 'configvars', name='configvars'),
         url(r'^build/(?P<build_id>\d+)/buildtime$', 'buildtime', name='buildtime'),
@@ -67,43 +71,108 @@ urlpatterns = patterns('toastergui.views',
         url(r'^build/(?P<build_id>\d+)/target/(?P<target_id>\d+)/packagefile/(?P<packagefile_id>\d+)$',
              'image_information_dir', name='image_information_dir'),
 
-
         # build download artifact
         url(r'^build/(?P<build_id>\d+)/artifact/(?P<artifact_type>\w+)/id/(?P<artifact_id>\w+)', 'build_artifact', name="build_artifact"),
 
-        # urls not linked from the dashboard
-        url(r'^layerversions/(?P<layerversion_id>\d+)/recipes/.*$', 'layer_versions_recipes', name='layer_versions_recipes'),
-
         # project URLs
         url(r'^newproject/$', 'newproject', name='newproject'),
-        url(r'^importlayer/$', 'importlayer', name='importlayer'),
 
-        url(r'^layers/$', 'layers', name='layers'),
-        url(r'^layer/(?P<layerid>\d+)/$', 'layerdetails', name='layerdetails'),
-        url(r'^layer/$', lambda x: HttpResponseBadRequest(), name='base_layerdetails'),
-        url(r'^targets/$', 'targets', name='all-targets'),
-        url(r'^machines/$', 'machines', name='machines'),
+        url(r'^projects/$',
+            tables.ProjectsTable.as_view(template_name="projects-toastertable.html"),
+            name='all-projects'),
 
-        url(r'^projects/$', 'projects', name='all-projects'),
-
-        url(r'^project/$', lambda x: HttpResponseBadRequest(), name='base_project'),
         url(r'^project/(?P<pid>\d+)/$', 'project', name='project'),
         url(r'^project/(?P<pid>\d+)/configuration$', 'projectconf', name='projectconf'),
-        url(r'^project/(?P<pid>\d+)/builds$', 'projectbuilds', name='projectbuilds'),
+        url(r'^project/(?P<pid>\d+)/builds/$',
+            tables.ProjectBuildsTable.as_view(template_name="projectbuilds-toastertable.html"),
+            name='projectbuilds'),
 
-        url(r'^xhr_build/$', 'xhr_build', name='xhr_build'),
-        url(r'^xhr_projectbuild/(?P<pid>\d+)/$', 'xhr_projectbuild', name='xhr_projectbuild'),
-        url(r'^xhr_projectinfo/$', 'xhr_projectinfo', name='xhr_projectinfo'),
-        url(r'^xhr_projectedit/(?P<pid>\d+)/$', 'xhr_projectedit', name='xhr_projectedit'),
-        url(r'^xhr_configvaredit/(?P<pid>\d+)/$', 'xhr_configvaredit', name='xhr_configvaredit'),
+        # the import layer is a project-specific functionality;
+        url(r'^project/(?P<pid>\d+)/importlayer$', 'importlayer', name='importlayer'),
 
-        url(r'^xhr_datatypeahead/$', 'xhr_datatypeahead', name='xhr_datatypeahead'),
+        # the table pages that have been converted to ToasterTable widget
+        url(r'^project/(?P<pid>\d+)/machines/$',
+            tables.MachinesTable.as_view(template_name="generic-toastertable-page.html"),
+            name="projectmachines"),
+
+        url(r'^project/(?P<pid>\d+)/softwarerecipes/$',
+            tables.SoftwareRecipesTable.as_view(template_name="generic-toastertable-page.html"),
+            name="projectsoftwarerecipes"),
+
+        url(r'^project/(?P<pid>\d+)/images/$',
+            tables.ImageRecipesTable.as_view(template_name="generic-toastertable-page.html"), name="projectimagerecipes"),
+
+        url(r'^project/(?P<pid>\d+)/customimages/$',
+            tables.CustomImagesTable.as_view(template_name="generic-toastertable-page.html"), name="projectcustomimages"),
+
+        url(r'^project/(?P<pid>\d+)/newcustomimage/$',
+            tables.NewCustomImagesTable.as_view(template_name="newcustomimage.html"),
+            name="newcustomimage"),
+
+
+        url(r'^project/(?P<pid>\d+)/layers/$',
+            tables.LayersTable.as_view(template_name="generic-toastertable-page.html"),
+            name="projectlayers"),
+
+
+
+        url(r'^project/(?P<pid>\d+)/layer/(?P<layerid>\d+)$',
+            'layerdetails', name='layerdetails'),
+
+        url(r'^project/(?P<pid>\d+)/layer/(?P<layerid>\d+)/recipes/$',
+            tables.LayerRecipesTable.as_view(template_name="generic-toastertable-page.html"),
+            { 'table_name': tables.LayerRecipesTable.__name__.lower(),
+              'title' : 'All recipes in layer' },
+             name=tables.LayerRecipesTable.__name__.lower()),
+
+        url(r'^project/(?P<pid>\d+)/layer/(?P<layerid>\d+)/machines/$',
+            tables.LayerMachinesTable.as_view(template_name="generic-toastertable-page.html"),
+            { 'table_name': tables.LayerMachinesTable.__name__.lower(),
+              'title' : 'All machines in layer' },
+            name=tables.LayerMachinesTable.__name__.lower()),
+
+
+        url(r'^project/(?P<pid>\d+)/customrecipe/(?P<recipeid>\d+)/selectpackages/$',
+            tables.SelectPackagesTable.as_view(template_name="generic-toastertable-page.html"), name="recipeselectpackages"),
+
+
+        url(r'^project/(?P<pid>\d+)/customrecipe/(?P<recipe_id>\d+)$',
+            'customrecipe',
+            name="customrecipe"),
+
+
+
+        # typeahead api end points
+        url(r'^xhr_typeahead/(?P<pid>\d+)/layers$',
+            typeaheads.LayersTypeAhead.as_view(), name='xhr_layerstypeahead'),
+        url(r'^xhr_typeahead/(?P<pid>\d+)/machines$',
+            typeaheads.MachinesTypeAhead.as_view(), name='xhr_machinestypeahead'),
+        url(r'^xhr_typeahead/(?P<pid>\d+)/recipes$',
+            typeaheads.RecipesTypeAhead.as_view(), name='xhr_recipestypeahead'),
+        url(r'^xhr_typeahead/projects$',
+            typeaheads.ProjectsTypeAhead.as_view(), name='xhr_projectstypeahead'),
+
+
+
+        url(r'^xhr_testreleasechange/(?P<pid>\d+)$', 'xhr_testreleasechange',
+            name='xhr_testreleasechange'),
+        url(r'^xhr_configvaredit/(?P<pid>\d+)$', 'xhr_configvaredit',
+            name='xhr_configvaredit'),
+
         url(r'^xhr_importlayer/$', 'xhr_importlayer', name='xhr_importlayer'),
         url(r'^xhr_updatelayer/$', 'xhr_updatelayer', name='xhr_updatelayer'),
 
-        # dashboard for failed build requests
-        url(r'^project/(?P<pid>\d+)/buildrequest/(?P<brid>\d+)$', 'buildrequestdetails', name='buildrequestdetails'),
+        # JS Unit tests
+        url(r'^js-unit-tests/$', 'jsunittests', name='js-unit-tests'),
 
-        # default redirection
-        url(r'^$', RedirectView.as_view( url= 'landing')),
+        # image customisation functionality
+        url(r'^xhr_customrecipe/(?P<recipe_id>\d+)/packages/(?P<package_id>\d+|)$',
+            'xhr_customrecipe_packages', name='xhr_customrecipe_packages'),
+        url(r'^xhr_customrecipe/(?P<recipe_id>\d+)$', 'xhr_customrecipe_id',
+            name='xhr_customrecipe_id'),
+        url(r'^xhr_customrecipe/', 'xhr_customrecipe',
+            name='xhr_customrecipe'),
+
+          # default redirection
+        url(r'^$', RedirectView.as_view(url='landing', permanent=True)),
 )

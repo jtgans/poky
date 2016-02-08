@@ -1,40 +1,53 @@
-require pkgconfig.inc
+SUMMARY = "Helper tool used when compiling"
+DESCRIPTION = "pkg-config is a helper tool used when compiling applications and libraries. It helps determined \
+the correct compiler/link options.  It is also language-agnostic."
+HOMEPAGE = "http://pkg-config.freedesktop.org/wiki/"
+BUGTRACKER = "http://bugs.freedesktop.org/buglist.cgi?product=pkg-config"
+SECTION = "console/utils"
+
+LICENSE = "GPLv2+"
+LIC_FILES_CHKSUM = "file://COPYING;md5=b234ee4d69f5fce4486a80fdaf4a4263"
+
+DEPENDS = "glib-2.0"
+DEPENDS_class-native = ""
+DEPENDS_class-nativesdk = ""
+
+SRCREV = "5914edfe9604abfedd220103cbac382fc4d268bb"
+PV = "0.29+git${SRCPV}"
 
 SRC_URI = "git://anongit.freedesktop.org/pkg-config \
-           file://autofoo.patch"
+           file://pkg-config-native.in \
+           file://fix-glib-configure-libtool-usage.patch \
+           "
 
-S = "${WORKDIR}/git/"
+S = "${WORKDIR}/git"
 
-SRCREV = "66d49f1375fec838bcd301bb4ca2ef76cee0e47c"
-PV = "0.23+git${SRCPV}"
-PR = "r1"
+inherit autotools
 
-DEFAULT_PREFERENCE = "-1"
+EXTRA_OECONF = "--without-internal-glib"
+EXTRA_OECONF_class-native = "--with-internal-glib"
+EXTRA_OECONF_class-nativesdk = "--with-internal-glib"
 
-# Can't do native version with git since git-native depends on pkgconfig-native
-BBCLASSEXTEND = "nativesdk"
+acpaths = "-I ."
 
-do_fixsource() {
-	# Adapted from autogen.sh
-	cd ${S}
-	tar -xvzf glib-1.2.10.tar.gz
-	
-	chmod +w `find glib-1.2.10 -name Makefile.am`
-	perl -p -i.bak -e "s/lib_LTLIBRARIES/noinst_LTLIBRARIES/g" `find glib-1.2.10 -name Makefile.am`
-	perl -p -i.bak -e "s/bin_SCRIPTS/noinst_SCRIPTS/g" `find glib-1.2.10 -name Makefile.am`
-	perl -p -i.bak -e "s/include_HEADERS/noinst_HEADERS/g" `find glib-1.2.10 -name Makefile.am`
-	perl -p -i.bak -e "s/glibnoinst_HEADERS/noinst_HEADERS/g" `find glib-1.2.10 -name Makefile.am`
-	perl -p -i.bak -e 's/([a-zA-Z0-9]+)_DATA/noinst_DATA/g' `find glib-1.2.10 -name Makefile.am`
-	perl -p -i.bak -e "s/info_TEXINFOS/noinst_TEXINFOS/g" `find glib-1.2.10 -name Makefile.am`
-	perl -p -i.bak -e "s/man_MANS/noinst_MANS/g" `find glib-1.2.10 -name Makefile.am`
-	
-	## patch gslist.c to have stable sort
-	perl -p -w -i.bak -e 's/if \(compare_func\(l1->data,l2->data\) < 0\)/if \(compare_func\(l1->data,l2->data\) <= 0\)/g' glib-1.2.10/gslist.c
-	
-	# Update random auto* files to actually have something which have a snowball's
-	# chance in a hot place of working with modern auto* tools.
-	
-	(cd glib-1.2.10 && for p in ../glib-patches/*.diff; do echo $p; patch -p1 < $p || exit 1; done ) || exit 1
+BBCLASSEXTEND = "native nativesdk"
+
+# Set an empty dev package to ensure the base PN package gets
+# the pkg.m4 macros, pkgconfig does not deliver any other -dev
+# files.
+FILES_${PN}-dev = ""
+FILES_${PN} += "${datadir}/aclocal/pkg.m4"
+
+# When using the RPM generated automatic package dependencies, some packages
+# will end up requiring 'pkgconfig(pkg-config)'.  Allow this behavior by
+# specifying an appropriate provide.
+RPROVIDES_${PN} += "pkgconfig(pkg-config)"
+
+# Install a pkg-config-native wrapper that will use the native sysroot instead
+# of the MACHINE sysroot, for using pkg-config when building native tools.
+do_install_append_class-native () {
+    sed -e "s|@PATH_NATIVE@|${PKG_CONFIG_PATH}|" \
+        -e "s|@LIBDIR_NATIVE@|${PKG_CONFIG_LIBDIR}|" \
+        < ${WORKDIR}/pkg-config-native.in > ${B}/pkg-config-native
+    install -m755 ${B}/pkg-config-native ${D}${bindir}/pkg-config-native
 }
-
-addtask fixsource before do_patch after do_unpack

@@ -1,14 +1,10 @@
 UPDATERCPN ?= "${PN}"
 
-DEPENDS_append = " update-rc.d-native"
-VIRTUAL-RUNTIME_initscripts ?= "initscripts"
-DEPENDS_append_class-target = " ${VIRTUAL-RUNTIME_initscripts}"
+DEPENDS_append_class-target = " update-rc.d-native update-rc.d initscripts"
 UPDATERCD = "update-rc.d"
 UPDATERCD_class-cross = ""
 UPDATERCD_class-native = ""
 UPDATERCD_class-nativesdk = ""
-
-RRECOMMENDS_${UPDATERCPN}_append = " ${UPDATERCD}"
 
 INITSCRIPT_PARAMS ?= "defaults"
 
@@ -58,11 +54,11 @@ fi
 
 
 def update_rc_after_parse(d):
-    if d.getVar('INITSCRIPT_PACKAGES') == None:
-        if d.getVar('INITSCRIPT_NAME') == None:
-            raise bb.build.FuncFailed("%s inherits update-rc.d but doesn't set INITSCRIPT_NAME" % d.getVar('FILE'))
-        if d.getVar('INITSCRIPT_PARAMS') == None:
-            raise bb.build.FuncFailed("%s inherits update-rc.d but doesn't set INITSCRIPT_PARAMS" % d.getVar('FILE'))
+    if d.getVar('INITSCRIPT_PACKAGES', False) == None:
+        if d.getVar('INITSCRIPT_NAME', False) == None:
+            raise bb.build.FuncFailed("%s inherits update-rc.d but doesn't set INITSCRIPT_NAME" % d.getVar('FILE', False))
+        if d.getVar('INITSCRIPT_PARAMS', False) == None:
+            raise bb.build.FuncFailed("%s inherits update-rc.d but doesn't set INITSCRIPT_PARAMS" % d.getVar('FILE', False))
 
 python __anonymous() {
     update_rc_after_parse(d)
@@ -119,6 +115,8 @@ python populate_packages_updatercd () {
                 postrm = '#!/bin/sh\n'
         postrm += localdata.getVar('updatercd_postrm', True)
         d.setVar('pkg_postrm_%s' % pkg, postrm)
+
+        d.appendVar('RRECOMMENDS_' + pkg, " ${MLPREFIX}${UPDATERCD}")
 
     # Check that this class isn't being inhibited (generally, by
     # systemd.bbclass) before doing any work.

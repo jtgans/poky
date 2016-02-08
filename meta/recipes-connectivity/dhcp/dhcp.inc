@@ -17,12 +17,17 @@ SRC_URI = "ftp://ftp.isc.org/isc/dhcp/${PV}/dhcp-${PV}.tar.gz \
            file://init-relay file://default-relay \
            file://init-server file://default-server \
            file://dhclient.conf file://dhcpd.conf \
-           file://dhcpd.service file://dhcrelay.service"
+           file://dhcpd.service file://dhcrelay.service \
+           file://dhcpd6.service \
+           file://search-for-libxml2.patch "
+
+UPSTREAM_CHECK_URI = "ftp://ftp.isc.org/isc/dhcp/"
+UPSTREAM_CHECK_REGEX = "(?P<pver>\d+\.\d+\.(\d+?))/"
 
 inherit autotools systemd
 
 SYSTEMD_PACKAGES = "${PN}-server ${PN}-relay"
-SYSTEMD_SERVICE_${PN}-server = "dhcpd.service"
+SYSTEMD_SERVICE_${PN}-server = "dhcpd.service dhcpd6.service"
 SYSTEMD_AUTO_ENABLE_${PN}-server = "disable"
 
 SYSTEMD_SERVICE_${PN}-relay = "dhcrelay.service"
@@ -59,9 +64,12 @@ do_install_append () {
 	# Install systemd unit files
 	install -d ${D}${systemd_unitdir}/system
 	install -m 0644 ${WORKDIR}/dhcpd.service ${D}${systemd_unitdir}/system
+	install -m 0644 ${WORKDIR}/dhcpd6.service ${D}${systemd_unitdir}/system
 	install -m 0644 ${WORKDIR}/dhcrelay.service ${D}${systemd_unitdir}/system
-	sed -i -e 's,@SBINDIR@,${sbindir},g' ${D}${systemd_unitdir}/system/dhcpd.service ${D}${systemd_unitdir}/system/dhcrelay.service
-	sed -i -e 's,@SYSCONFDIR@,${sysconfdir},g' ${D}${systemd_unitdir}/system/dhcpd.service
+	sed -i -e 's,@SBINDIR@,${sbindir},g' ${D}${systemd_unitdir}/system/dhcpd*.service ${D}${systemd_unitdir}/system/dhcrelay.service
+	sed -i -e 's,@SYSCONFDIR@,${sysconfdir},g' ${D}${systemd_unitdir}/system/dhcpd*.service
+	sed -i -e 's,@base_bindir@,${base_bindir},g' ${D}${systemd_unitdir}/system/dhcpd*.service
+	sed -i -e 's,@localstatedir@,${localstatedir},g' ${D}${systemd_unitdir}/system/dhcpd*.service
 }
 
 PACKAGES += "dhcp-server dhcp-server-config dhcp-client dhcp-relay dhcp-omshell"
@@ -70,17 +78,17 @@ FILES_${PN} = ""
 RDEPENDS_${PN}-dev = ""
 RDEPENDS_${PN}-staticdev = ""
 
-FILES_dhcp-server = "${sbindir}/dhcpd ${sysconfdir}/init.d/dhcp-server"
-RRECOMMENDS_dhcp-server = "dhcp-server-config"
+FILES_${PN}-server = "${sbindir}/dhcpd ${sysconfdir}/init.d/dhcp-server"
+RRECOMMENDS_${PN}-server = "dhcp-server-config"
 
-FILES_dhcp-server-config = "${sysconfdir}/default/dhcp-server ${sysconfdir}/dhcp/dhcpd.conf"
+FILES_${PN}-server-config = "${sysconfdir}/default/dhcp-server ${sysconfdir}/dhcp/dhcpd.conf"
 
-FILES_dhcp-relay = "${sbindir}/dhcrelay ${sysconfdir}/init.d/dhcp-relay ${sysconfdir}/default/dhcp-relay"
+FILES_${PN}-relay = "${sbindir}/dhcrelay ${sysconfdir}/init.d/dhcp-relay ${sysconfdir}/default/dhcp-relay"
 
-FILES_dhcp-client = "${base_sbindir}/dhclient ${base_sbindir}/dhclient-script ${sysconfdir}/dhcp/dhclient.conf"
-RDEPENDS_dhcp-client = "bash"
+FILES_${PN}-client = "${base_sbindir}/dhclient ${base_sbindir}/dhclient-script ${sysconfdir}/dhcp/dhclient.conf"
+RDEPENDS_${PN}-client = "bash"
 
-FILES_dhcp-omshell = "${bindir}/omshell"
+FILES_${PN}-omshell = "${bindir}/omshell"
 
 pkg_postinst_dhcp-server() {
     mkdir -p $D/${localstatedir}/lib/dhcp

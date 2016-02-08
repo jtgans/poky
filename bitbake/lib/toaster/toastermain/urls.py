@@ -32,8 +32,6 @@ from django.contrib import admin
 admin.autodiscover()
 
 urlpatterns = patterns('',
-    # the api-s are not auto-discoverable
-    url(r'^api/1.0/', include('bldviewer.api')),
 
     # Examples:
     # url(r'^toaster/', include('toaster.foo.urls')),
@@ -42,8 +40,12 @@ urlpatterns = patterns('',
     # url(r'^admin/doc/', include('django.contrib.admindocs.urls')),
 
 
+    # This is here to maintain backward compatibility and will be deprecated
+    # in the future.
+    url(r'^orm/eventfile$', 'bldcollector.views.eventfile'),
+
     # if no application is selected, we have the magic toastergui app here
-    url(r'^$', never_cache(RedirectView.as_view(url='/toastergui/'))),
+    url(r'^$', never_cache(RedirectView.as_view(url='/toastergui/', permanent=True))),
 )
 
 import toastermain.settings
@@ -57,12 +59,11 @@ if toastermain.settings.DEBUG_PANEL_ENABLED:
     urlpatterns.insert(1, url(r'', include(debug_toolbar.urls)))
     #logger.info("Enabled django_toolbar extension")
 
+urlpatterns = [
+    # Uncomment the next line to enable the admin:
+    url(r'^admin/', include(admin.site.urls)),
+] + urlpatterns
 
-if toastermain.settings.MANAGED:
-    urlpatterns = [
-        # Uncomment the next line to enable the admin:
-        url(r'^admin/', include(admin.site.urls)),
-    ] + urlpatterns
 # Automatically discover urls.py in various apps, beside our own
 # and map module directories to the patterns
 

@@ -21,9 +21,9 @@ do_install_append () {
         install -dm755 ${D}${base_bindir}
         install -dm755 ${D}${base_sbindir}
         # add symlinks to kmod
-        ln -s ..${base_bindir}/kmod ${D}${base_bindir}/lsmod
+        lnr ${D}${base_bindir}/kmod ${D}${base_bindir}/lsmod
         for tool in insmod rmmod depmod modinfo modprobe; do
-                ln -s ..${base_bindir}/kmod ${D}${base_sbindir}/${tool}
+                lnr ${D}${base_bindir}/kmod ${D}${base_sbindir}/${tool}
         done
         # configuration directories
         install -dm755 ${D}${base_libdir}/depmod.d
@@ -33,28 +33,13 @@ do_install_append () {
 
         # install depmod.d file for search/ dir
         install -Dm644 "${WORKDIR}/depmod-search.conf" "${D}${base_libdir}/depmod.d/search.conf"
-
-        if ${@base_contains('DISTRO_FEATURES', 'ptest', 'true', 'false', d)}; then
-                find testsuite -name *.ko -exec tar rf testmodule.tar {} \;
-                find testsuite -name *.ko -exec rm -f {} \;
-        fi
 }
 
 do_compile_prepend() {
             sed -i 's/ac_pwd=/#ac_pwd=/' config.status ; sed -i "/#ac_pwd=/a\ac_pwd='.'" config.status
 }
 
-do_compile_ptest () {
-        oe_runmake buildtest-TESTS rootfs
-}
-
-do_install_ptest () {
-        install testmodule.tar ${D}${PTEST_PATH}
-}
-
-INSANE_SKIP_${PN}-ptest = "arch"
-
-inherit update-alternatives
+inherit update-alternatives bash-completion
 
 ALTERNATIVE_PRIORITY = "60"
 
@@ -71,8 +56,7 @@ ALTERNATIVE_TARGET[lsmod] = "${base_bindir}/lsmod.${BPN}"
 
 ALTERNATIVE_LINK_NAME[depmod] = "${base_sbindir}/depmod"
 
-PACKAGES =+ "libkmod ${PN}-bash-completion"
+PACKAGES =+ "libkmod"
 
 FILES_libkmod = "${base_libdir}/libkmod*${SOLIBS} ${libdir}/libkmod*${SOLIBS}"
 FILES_${PN} += "${base_libdir}/depmod.d ${base_libdir}/modprobe.d"
-FILES_${PN}-bash-completion = "${datadir}/bash-completion"

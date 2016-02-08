@@ -9,11 +9,10 @@ STAGINGCC_class-nativesdk = "gcc-crosssdk-initial-${TARGET_ARCH}"
 TOOLCHAIN_OPTIONS = " --sysroot=${STAGING_DIR_TCBOOTSTRAP}"
 
 do_configure () {
-	sed -ie 's,{ (exit 1); exit 1; }; },{ (exit 0); }; },g' ${S}/configure
-	chmod +x ${S}/configure
 	(cd ${S} && gnu-configize) || die "failure in running gnu-configize"
 	find ${S} -name "configure" | xargs touch
-	${S}/configure --host=${TARGET_SYS} --build=${BUILD_SYS} \
+	cfgscript=`python -c "import os; print os.path.relpath('${S}', '.')"`/configure
+	$cfgscript --host=${TARGET_SYS} --build=${BUILD_SYS} \
 		--prefix=/usr \
 		--without-cvs --disable-sanity-checks \
 		--with-headers=${STAGING_DIR_TARGET}${includedir} \
@@ -76,3 +75,5 @@ do_populate_sysroot[sstate-outputdirs] = "${STAGING_DIR_TCBOOTSTRAP}/"
 do_evacuate_scripts () {
 	:
 }
+
+inherit nopackages

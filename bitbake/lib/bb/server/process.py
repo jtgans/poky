@@ -97,7 +97,7 @@ class ProcessServer(Process, BaseImplServer):
     def run(self):
         for event in bb.event.ui_queue:
             self.event_queue.put(event)
-        self.event_handle.value = bb.event.register_UIHhandler(self)
+        self.event_handle.value = bb.event.register_UIHhandler(self, True)
 
         bb.cooker.server_main(self.cooker, self.main)
 
@@ -106,6 +106,7 @@ class ProcessServer(Process, BaseImplServer):
         # the UI and communicated to us
         self.quitin.close()
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+        bb.utils.set_process_name("Cooker")
         while not self.quit:
             try:
                 if self.command_channel.poll():
@@ -114,6 +115,10 @@ class ProcessServer(Process, BaseImplServer):
                 if self.quitout.poll():
                     self.quitout.recv()
                     self.quit = True
+                    try:
+                        self.runCommand(["stateForceShutdown"])
+                    except:
+                        pass
 
                 self.idle_commands(.1, [self.command_channel, self.quitout])
             except Exception:
@@ -123,9 +128,12 @@ class ProcessServer(Process, BaseImplServer):
         bb.event.unregister_UIHhandler(self.event_handle.value)
         self.command_channel.close()
         self.cooker.shutdown(True)
+        self.quitout.close()
 
-    def idle_commands(self, delay, fds = []):
+    def idle_commands(self, delay, fds=None):
         nextsleep = delay
+        if not fds:
+            fds = []
 
         for function, data in self._idlefuns.items():
             try:
@@ -144,8 +152,9 @@ class ProcessServer(Process, BaseImplServer):
                     fds = fds + retval
             except SystemExit:
                 raise
-            except Exception:
-                logger.exception('Running idle function')
+            except Exception as exc:
+                if not isinstance(exc, bb.BBHandledException):
+                    logger.exception('Running idle function')
                 del self._idlefuns[function]
                 self.quit = True
 
@@ -169,12 +178,16 @@ class BitBakeProcessServerConnection(BitBakeBaseServerConnection):
         self.event_queue = event_queue
         self.connection = ServerCommunicator(self.ui_channel, self.procserver.event_handle, self.procserver)
         self.events = self.event_queue
+        self.terminated = False
 
     def sigterm_terminate(self):
         bb.error("UI received SIGTERM")
         self.terminate()
 
     def terminate(self):
+        if self.terminated:
+            return
+        self.terminated = True
         def flushevents():
             while True:
                 try:
@@ -200,6 +213,7 @@ class ProcessEventQueue(multiprocessing.queues.Queue):
     def __init__(self, maxsize):
         multiprocessing.queues.Queue.__init__(self, maxsize)
         self.exit = False
+        bb.utils.set_process_name("ProcessEQueue")
 
     def setexit(self):
         self.exit = True

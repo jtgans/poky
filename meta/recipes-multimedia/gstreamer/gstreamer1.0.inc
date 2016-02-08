@@ -5,23 +5,33 @@ HOMEPAGE = "http://gstreamer.freedesktop.org/"
 BUGTRACKER = "https://bugzilla.gnome.org/enter_bug.cgi?product=Gstreamer"
 SECTION = "multimedia"
 LICENSE = "LGPLv2+"
-DEPENDS = "glib-2.0 libxml2 bison-native flex-native"
 
-inherit autotools pkgconfig gettext
+DEPENDS = "glib-2.0 glib-2.0-native libcap libxml2 bison-native flex-native"
 
-GSTREAMER_1_DEBUG ?= "--disable-debug"
-EXTRA_OECONF = "--disable-docbook --disable-gtk-doc \
-                --disable-dependency-tracking --disable-check \
-                --disable-examples --disable-tests \
-                --disable-valgrind ${GSTREAMER_1_DEBUG} \
-                "
+inherit autotools pkgconfig gettext upstream-version-is-even
 
-RRECOMMENDS_${PN}_qemux86    += "kernel-module-snd-ens1370 kernel-module-snd-rawmidi"
-RRECOMMENDS_${PN}_qemux86-64 += "kernel-module-snd-ens1370 kernel-module-snd-rawmidi"
+PACKAGECONFIG[check] = "--enable-check,--disable-check"
+PACKAGECONFIG[debug] = "--enable-debug,--disable-debug"
+PACKAGECONFIG[tests] = "--enable-tests,--disable-tests"
+PACKAGECONFIG[valgrind] = "--enable-valgrind,--disable-valgrind,valgrind,"
+
+EXTRA_OECONF = " \
+    --disable-dependency-tracking \
+    --disable-docbook \
+    --disable-examples \
+    --disable-gtk-doc \
+"
 
 CACHED_CONFIGUREVARS += "ac_cv_header_valgrind_valgrind_h=no"
 
-FILES_${PN} += " ${libdir}/gstreamer-1.0/*.so"
-FILES_${PN}-dev += " ${libdir}/gstreamer-1.0/*.la ${libdir}/gstreamer-1.0/*.a"
-FILES_${PN}-dbg += " ${libdir}/gstreamer-1.0/.debug/ ${libexecdir}/gstreamer-1.0/.debug/"
+# musl libc generates warnings if <sys/poll.h> is included directly
+CACHED_CONFIGUREVARS += "ac_cv_header_sys_poll_h=no"
 
+PACKAGES += "${PN}-bash-completion"
+
+FILES_${PN} += "${libdir}/gstreamer-1.0/*.so"
+FILES_${PN}-dev += "${libdir}/gstreamer-1.0/*.la ${libdir}/gstreamer-1.0/*.a ${libdir}/gstreamer-1.0/include"
+FILES_${PN}-bash-completion += "${datadir}/bash-completion/completions/ ${datadir}/bash-completion/helpers/gst*"
+
+RRECOMMENDS_${PN}_qemux86 += "kernel-module-snd-ens1370 kernel-module-snd-rawmidi"
+RRECOMMENDS_${PN}_qemux86-64 += "kernel-module-snd-ens1370 kernel-module-snd-rawmidi"

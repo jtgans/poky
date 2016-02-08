@@ -33,6 +33,7 @@ SRC_URI = "file://functions \
            file://GPLv2.patch \
            file://dmesg.sh \
            file://logrotate-dmesg.conf \
+           ${@bb.utils.contains('DISTRO_FEATURES','selinux','file://sushell','',d)} \
 "
 
 S = "${WORKDIR}"
@@ -46,7 +47,9 @@ DEPENDS_append = " update-rc.d-native"
 DEPENDS_append = " ${@bb.utils.contains('DISTRO_FEATURES','systemd','systemd-systemctl-native','',d)}"
 
 PACKAGES =+ "${PN}-functions"
-RDEPENDS_${PN} = "${PN}-functions"
+RDEPENDS_${PN} = "${PN}-functions \
+                  ${@bb.utils.contains('DISTRO_FEATURES','selinux','bash','',d)} \
+		 "
 FILES_${PN}-functions = "${sysconfdir}/init.d/functions*"
 
 ALTERNATIVE_PRIORITY_${PN}-functions = "90"
@@ -76,7 +79,7 @@ do_install () {
 	install -d ${D}${sysconfdir}/default
 	install -d ${D}${sysconfdir}/default/volatiles
 	# Holds state information pertaining to urandom
-	install -d ${D}/var/lib/urandom
+	install -d ${D}${localstatedir}/lib/urandom
 
 	install -m 0644    ${WORKDIR}/functions		${D}${sysconfdir}/init.d
 	install -m 0755    ${WORKDIR}/bootmisc.sh	${D}${sysconfdir}/init.d
@@ -91,6 +94,7 @@ do_install () {
 	install -m 0755    ${WORKDIR}/single		${D}${sysconfdir}/init.d
 	install -m 0755    ${WORKDIR}/umountnfs.sh	${D}${sysconfdir}/init.d
 	install -m 0755    ${WORKDIR}/urandom		${D}${sysconfdir}/init.d
+	sed -i ${D}${sysconfdir}/init.d/urandom -e 's,/var/,${localstatedir}/,g;s,/etc/,${sysconfdir}/,g'
 	install -m 0755    ${WORKDIR}/devpts.sh	${D}${sysconfdir}/init.d
 	install -m 0755    ${WORKDIR}/devpts		${D}${sysconfdir}/default
 	install -m 0755    ${WORKDIR}/sysfs.sh		${D}${sysconfdir}/init.d
@@ -103,6 +107,11 @@ do_install () {
 
 	if [ "${TARGET_ARCH}" = "arm" ]; then
 		install -m 0755 ${WORKDIR}/alignment.sh	${D}${sysconfdir}/init.d
+	fi
+
+	if ${@bb.utils.contains('DISTRO_FEATURES','selinux','true','false',d)}; then
+		install -d ${D}/${base_sbindir}
+		install -m 0755 ${WORKDIR}/sushell ${D}/${base_sbindir}
 	fi
 #
 # Install device dependent scripts
@@ -163,6 +172,11 @@ pkg_postinst_${PN} () {
 			systemctl $OPTS mask $SERVICE.service
 		done
 	fi
+
+    # Delete any old volatile cache script, as directories may have moved
+    if [ -z "$D" ]; then
+        rm -f "/etc/volatile.cache"
+    fi
 }
 
 CONFFILES_${PN} += "${sysconfdir}/init.d/checkroot.sh"

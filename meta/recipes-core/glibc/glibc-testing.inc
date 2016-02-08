@@ -22,7 +22,6 @@ do_compile_append () {
 	sed -i -e "/^'/d" ${B}/${HOST_PREFIX}testglibc
 	sed -i -e "/^UID/d" ${B}/${HOST_PREFIX}testglibc
 	sed -i -e "/^TERM/d" ${B}/${HOST_PREFIX}testglibc
-	sed -i -e "/^PATCH_GET/d" ${B}/${HOST_PREFIX}testglibc
 	sed -i -e "/^PKG_/d" ${B}/${HOST_PREFIX}testglibc
 	sed -i -e "/^POSIXLY_/d" ${B}/${HOST_PREFIX}testglibc
 	sed -i -e "/^PPID/d" ${B}/${HOST_PREFIX}testglibc
@@ -54,7 +53,7 @@ then
 	echo "1. You dont have passwordless ssh setup to access \$target"
 	echo "2. NFS share on \$target is not mounted or if mounted then not matching the build tree layout."
 	echo "   The tree should be accessible at same location on build host and target"
-	echo "   You can add nfs-server to IMAGE_FEATURES to get the nfs client on target"
+	echo "   You can add nfs-client to IMAGE_FEATURES to get the nfs client on target"
 	echo "3. nfs server on build host is not running."
 	echo "   Please make sure that you have 'no_root_squash' added in /etc/exports if you want"
 	echo "   to test as root user on target (usually its recommended to create a non"
@@ -65,9 +64,26 @@ then
 fi
 	echo "# we test using cross compiler from real sysroot therefore override the" > ${B}/configparms
 	echo "# definitions that come from ${B}/config.make" >> ${B}/configparms
-
 	fgrep tcbootstrap ${B}/config.make > ${B}/configparms
 	sed -i -e "s/\-tcbootstrap//g" ${B}/configparms
+
+# g++ uses flag -nostdinc, so the locations of system include headers must be explicitly specified
+# If the locations are not already specified in config.make, then we provide the following locations:
+#    <sysroot>/usr/include/c++/<g++ version>
+#    <sysroot>/usr/include/c++/<g++ version>/<machine>
+
+cxxincludes=\`cat ${B}/config.make | gawk '\$1 == "c++-sysincludes"' | gawk -F"=" '{print \$2}' | sed "s/[ \t]\?//g"\`
+
+if [ -z "\$cxxincludes" ]; then
+  sysroot=\`cat ${B}/configparms | sed -n "/CXX/p" | sed -e "s/^.*--sysroot=//"\`
+  cxx=\`cat ${B}/configparms | gawk '\$1 ~ /^CXX/' | gawk -F"=" '{print \$2}' | gawk '{print \$1}'\`
+  cxxmachine=\`\$cxx -dumpmachine\`
+  cxxversion=\`\$cxx -dumpversion\`
+  # pass the new value of c++-sysincludes via configparms
+  echo "# c++-sysincludes added:" >> ${B}/configparms
+  echo "c++-sysincludes = -isystem \$sysroot/usr/include/c++/\$cxxversion -isystem \$sysroot/usr/include/c++/\$cxxversion/\$cxxmachine" >> ${B}/configparms
+fi
+
 wrapper="${S}/scripts/cross-test-ssh.sh \$target"
 localedef="${STAGING_BINDIR_NATIVE}/cross-localedef --little-endian --uint32-align=4"
 make tests-clean

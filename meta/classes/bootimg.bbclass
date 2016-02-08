@@ -29,7 +29,7 @@ do_bootimg[depends] += "dosfstools-native:do_populate_sysroot \
                         mtools-native:do_populate_sysroot \
                         cdrtools-native:do_populate_sysroot \
                         virtual/kernel:do_deploy \
-                        ${@oe.utils.ifelse(d.getVar('COMPRESSISO'),'zisofs-tools-native:do_populate_sysroot','')}"
+                        ${@oe.utils.ifelse(d.getVar('COMPRESSISO', False),'zisofs-tools-native:do_populate_sysroot','')}"
 
 PACKAGES = " "
 EXCLUDE_FROM_WORLD = "1"
@@ -46,6 +46,8 @@ BOOTIMG_EXTRA_SPACE ?= "512"
 EFI = "${@bb.utils.contains("MACHINE_FEATURES", "efi", "1", "0", d)}"
 EFI_PROVIDER ?= "grub-efi"
 EFI_CLASS = "${@bb.utils.contains("MACHINE_FEATURES", "efi", "${EFI_PROVIDER}", "", d)}"
+
+KERNEL_IMAGETYPE ??= "bzImage"
 
 # Include legacy boot if MACHINE_FEATURES includes "pcbios" or if it does not
 # contain "efi". This way legacy is supported by default if neither is
@@ -66,8 +68,8 @@ populate() {
 	DEST=$1
 	install -d ${DEST}
 
-	# Install bzImage, initrd, and rootfs.img in DEST for all loaders to use.
-	install -m 0644 ${DEPLOY_DIR_IMAGE}/bzImage ${DEST}/vmlinuz
+	# Install kernel, initrd, and rootfs.img in DEST for all loaders to use.
+	install -m 0644 ${DEPLOY_DIR_IMAGE}/${KERNEL_IMAGETYPE} ${DEST}/vmlinuz
 	
 	# initrd is made of concatenation of multiple filesystem images
 	if [ -n "${INITRD}" ]; then
@@ -136,19 +138,33 @@ build_iso() {
 		mkisofs_compress_opts="-r"
 	fi
 
+	# Check the size of ${ISODIR}/rootfs.img, use mkisofs -iso-level 3
+	# when it exceeds 3.8GB, the specification is 4G - 1 bytes, we need
+	# leave a few space for other files.
+	mkisofs_iso_level=""
+
+        if [ -n "${ROOTFS}" ] && [ -s "${ROOTFS}" ]; then
+		rootfs_img_size=`stat -c '%s' ${ISODIR}/rootfs.img`
+		# 4080218931 = 3.8 * 1024 * 1024 * 1024
+		if [ $rootfs_img_size -gt 4080218931 ]; then
+			bbnote "${ISODIR}/rootfs.img execeeds 3.8GB, using '-iso-level 3' for mkisofs"
+			mkisofs_iso_level="-iso-level 3"
+		fi
+	fi
+
 	if [ "${PCBIOS}" = "1" ] && [ "${EFI}" != "1" ] ; then
 		# PCBIOS only media
 		mkisofs -V ${BOOTIMG_VOLUME_ID} \
 		        -o ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.iso \
 			-b ${ISO_BOOTIMG} -c ${ISO_BOOTCAT} \
 			$mkisofs_compress_opts \
-			${MKISOFS_OPTIONS} ${ISODIR}
+			${MKISOFS_OPTIONS} $mkisofs_iso_level ${ISODIR}
 	else
 		# EFI only OR EFI+PCBIOS
 		mkisofs -A ${BOOTIMG_VOLUME_ID} -V ${BOOTIMG_VOLUME_ID} \
 		        -o ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.iso \
 			-b ${ISO_BOOTIMG} -c ${ISO_BOOTCAT} \
-			$mkisofs_compress_opts ${MKISOFS_OPTIONS} \
+			$mkisofs_compress_opts ${MKISOFS_OPTIONS} $mkisofs_iso_level \
 			-eltorito-alt-boot -eltorito-platform efi \
 			-b efi.img -no-emul-boot \
 			${ISODIR}
@@ -156,10 +172,6 @@ build_iso() {
 	fi
 
 	isohybrid $isohybrid_args ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.iso
-
-	cd ${DEPLOY_DIR_IMAGE}
-	rm -f ${DEPLOY_DIR_IMAGE}/${IMAGE_LINK_NAME}.iso
-	ln -s ${IMAGE_NAME}.iso ${DEPLOY_DIR_IMAGE}/${IMAGE_LINK_NAME}.iso
 }
 
 build_fat_img() {
@@ -214,6 +226,12 @@ build_fat_img() {
 		FATSIZE="-F 32"
 	fi
 
+	# mkdosfs will fail if ${FATIMG} exists. Since we are creating an
+	# new image, it is safe to delete any previous image.
+	if [ -e ${FATIMG} ]; then
+		rm ${FATIMG}
+	fi
+
 	if [ -z "${HDDIMG_ID}" ]; then
 		mkdosfs ${FATSIZE} -n ${BOOTIMG_VOLUME_ID} -S 512 -C ${FATIMG} \
 			${BLOCKS}
@@ -238,6 +256,19 @@ build_hddimg() {
 			efi_hddimg_populate ${HDDDIR}
 		fi
 
+		# Check the size of ${HDDDIR}/rootfs.img, error out if it
+		# exceeds 4GB, it is the single file's max size of FAT fs.
+		if [ -f ${HDDDIR}/rootfs.img ]; then
+			rootfs_img_size=`stat -c '%s' ${HDDDIR}/rootfs.img`
+			max_size=`expr 4 \* 1024 \* 1024 \* 1024`
+			if [ $rootfs_img_size -gt $max_size ]; then
+				bberror "${HDDDIR}/rootfs.img execeeds 4GB,"
+				bberror "this doesn't work on FAT filesystem, you can try either of:"
+				bberror "1) Reduce the size of rootfs.img"
+				bbfatal "2) Use iso, vmdk or vdi to instead of hddimg\n"
+			fi
+		fi
+
 		build_fat_img ${HDDDIR} ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.hddimg
 
 		if [ "${PCBIOS}" = "1" ]; then
@@ -245,10 +276,6 @@ build_hddimg() {
 		fi
 
 		chmod 644 ${DEPLOY_DIR_IMAGE}/${IMAGE_NAME}.hddimg
-
-		cd ${DEPLOY_DIR_IMAGE}
-		rm -f ${DEPLOY_DIR_IMAGE}/${IMAGE_LINK_NAME}.hddimg
-		ln -s ${IMAGE_NAME}.hddimg ${DEPLOY_DIR_IMAGE}/${IMAGE_LINK_NAME}.hddimg
 	fi
 }
 
@@ -259,10 +286,13 @@ python do_bootimg() {
         bb.build.exec_func('build_efi_cfg', d)
     bb.build.exec_func('build_hddimg', d)
     bb.build.exec_func('build_iso', d)
+    bb.build.exec_func('create_symlinks', d)
 }
+do_bootimg[subimages] = "hddimg iso"
+do_bootimg[imgsuffix] = "."
 
-IMAGE_TYPEDEP_iso = "ext3"
-IMAGE_TYPEDEP_hddimg = "ext3"
+IMAGE_TYPEDEP_iso = "ext4"
+IMAGE_TYPEDEP_hddimg = "ext4"
 IMAGE_TYPES_MASKED += "iso hddimg"
 
-addtask bootimg before do_build
+addtask bootimg before do_image_complete

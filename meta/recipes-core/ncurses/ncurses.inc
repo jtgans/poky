@@ -6,14 +6,13 @@ LIC_FILES_CHKSUM = "file://ncurses/base/version.c;beginline=1;endline=27;md5=cbc
 SECTION = "libs"
 DEPENDS = "ncurses-native"
 DEPENDS_class-native = ""
-INC_PR = "r15"
 
-BINCONFIG = "${bindir}/ncurses-config"
+BINCONFIG = "${bindir}/ncurses5-config ${bindir}/ncursesw5-config"
 
-inherit autotools binconfig-disabled multilib_header
+inherit autotools binconfig-disabled multilib_header pkgconfig
 
 # Upstream has useful patches at times at ftp://invisible-island.net/ncurses/
-SRC_URI = "${GNU_MIRROR}/ncurses/ncurses-${PV}.tar.gz"
+SRC_URI = "git://anonscm.debian.org/collab-maint/ncurses.git"
 
 EXTRA_AUTORECONF = "-I m4"
 CONFIG_SITE =+ "${WORKDIR}/config.cache"
@@ -97,6 +96,8 @@ do_configure() {
         # broken because it requires stdin to be pollable (which is
         # not the case for /dev/null redirections)
         export cf_cv_working_poll=yes
+	#Remove ${includedir} from CPPFLAGS, need for cross compile
+	sed -i 's#-I${cf_includedir}##g' ${S}/configure || die "sed CPPFLAGS"
 
 	# The --enable-pc-files requires PKG_CONFIG_LIBDIR existed
 	mkdir -p ${PKG_CONFIG_LIBDIR}
@@ -105,6 +106,7 @@ do_configure() {
 		return 1
 	! ${ENABLE_WIDEC} || \
 		ncurses_configure "widec" "--enable-widec" "--without-progs"
+
 }
 
 do_compile() {
@@ -173,7 +175,7 @@ do_install() {
 
         # include some basic terminfo files
         # stolen ;) from gentoo and modified a bit
-        for x in ansi console dumb linux rxvt screen sun vt52 vt100 vt102 vt200 vt220 xterm-color xterm-xfree86 xterm-256color
+        for x in ansi console dumb linux rxvt screen screen-256color sun vt52 vt100 vt102 vt200 vt220 xterm-color xterm-xfree86 xterm-256color
         do
                 local termfile="$(find "${D}${datadir}/terminfo/" -name "${x}" 2>/dev/null)"
                 local basedir="$(basename $(dirname "${termfile}"))"
@@ -231,7 +233,14 @@ do_install() {
             # At some point we can rely on coreutils 8.16 which has ln -r.
             lnr ${D}${base_libdir}/libtinfo.so.5 ${D}${libdir}/libtinfo.so
         fi
-
+        if [ -d "${D}${includedir}/ncurses" ]; then
+            for f in `find ${D}${includedir}/ncurses -name "*.h"`
+            do
+	        f=`basename $f`
+	        test -e ${D}${includedir}/$f && continue
+                ln -sf ncurses/$f ${D}${includedir}/$f
+            done
+        fi
         oe_multilib_header curses.h
 }
 
@@ -275,8 +284,8 @@ FILES_${PN}-tools = "\
   ${bindir}/infotocap \
   ${bindir}/captoinfo \
   ${bindir}/infocmp \
-  ${bindir}/clear${@['', '.${BPN\x7d']['${CLASSOVERRIDE}' == 'class-target']} \
-  ${bindir}/reset${@['', '.${BPN\x7d']['${CLASSOVERRIDE}' == 'class-target']} \
+  ${bindir}/clear${@['', '.${BPN}']['${CLASSOVERRIDE}' == 'class-target']} \
+  ${bindir}/reset${@['', '.${BPN}']['${CLASSOVERRIDE}' == 'class-target']} \
   ${bindir}/tack \
   ${bindir}/tabs \
 "

@@ -147,7 +147,6 @@ ifeq ($(DOC),yocto-project-qs)
 XSLTOPTS = --xinclude
 ALLPREQ = html eclipse tarball
 TARFILES = yocto-project-qs.html qs-style.css figures/yocto-environment.png \
-           figures/building-an-image.png figures/using-a-pre-built-image.png \
            figures/yocto-project-transp.png \
            eclipse
 MANUALS = $(DOC)/$(DOC).html $(DOC)/eclipse
@@ -199,7 +198,7 @@ TARFILES = mega-manual.html mega-style.css figures/yocto-environment.png \
 	figures/using-a-pre-built-image.png \
 	figures/poky-title.png figures/buildhistory.png \
         figures/buildhistory-web.png \
-	figures/adt-title.png figures/bsp-title.png \
+	figures/adt-title.png figures/sdk-title.png figures/bsp-title.png \
 	figures/kernel-dev-title.png figures/kernel-architecture-overview.png \
 	figures/app-dev-flow.png figures/bsp-dev-flow.png \
         figures/dev-title.png \
@@ -241,7 +240,9 @@ TARFILES = mega-manual.html mega-style.css figures/yocto-environment.png \
 	figures/analysis-for-package-splitting.png \
         figures/image-generation.png \
 	figures/sdk-generation.png figures/recipe-workflow.png \
-	figures/build-workspace-directory.png figures/mega-title.png
+	figures/build-workspace-directory.png figures/mega-title.png \
+	figures/toaster-title.png figures/hosted-service.png \
+	figures/simple-configuration.png
 	endif
 
 MANUALS = $(DOC)/$(DOC).html
@@ -261,7 +262,7 @@ TARFILES = ref-manual.html ref-style.css figures/poky-title.png \
 	figures/images.png figures/sdk.png figures/source-fetching.png \
 	figures/patching.png figures/configuration-compile-autoreconf.png \
 	figures/analysis-for-package-splitting.png figures/image-generation.png \
-	figures/sdk-generation.png
+	figures/sdk-generation.png figures/building-an-image.png
 MANUALS = $(DOC)/$(DOC).html $(DOC)/eclipse
 FIGURES = figures
 STYLESHEET = $(DOC)/*.css
@@ -272,7 +273,18 @@ ifeq ($(DOC),adt-manual)
 XSLTOPTS = --xinclude
 ALLPREQ = html eclipse tarball
 TARFILES = adt-manual.html adt-style.css figures/adt-title.png \
-			eclipse
+           figures/using-a-pre-built-image.png \
+           eclipse
+MANUALS = $(DOC)/$(DOC).html $(DOC)/eclipse
+FIGURES = figures
+STYLESHEET = $(DOC)/*.css
+endif
+
+ifeq ($(DOC),sdk-manual)
+XSLTOPTS = --xinclude
+ALLPREQ = html eclipse tarball
+TARFILES = sdk-manual.html sdk-style.css figures/sdk-title.png \
+           eclipse
 MANUALS = $(DOC)/$(DOC).html $(DOC)/eclipse
 FIGURES = figures
 STYLESHEET = $(DOC)/*.css
@@ -328,8 +340,10 @@ endif
 ifeq ($(DOC),toaster-manual)
 XSLTOPTS = --xinclude
 ALLPREQ = html tarball
-TARFILES = toaster-manual.html toaster-manual-style.css figures/toaster-title.png
-MANUALS = $(DOC)/$(DOC).html $(DOC)/$(DOC).pdf
+TARFILES = toaster-manual.html toaster-manual-style.css \
+	   figures/toaster-title.png figures/simple-configuration.png \
+	   figures/hosted-service.png
+MANUALS = $(DOC)/$(DOC).html
 FIGURES = figures
 STYLESHEET = $(DOC)/*.css
 endif
@@ -338,7 +352,7 @@ endif
 ##
 # These URI should be rewritten by your distribution's xml catalog to
 # match your locally installed XSL stylesheets.
-XSL_BASE_URI  = http://docbook.sourceforge.net/release/xsl/current
+XSL_BASE_URI  = http://docbook.sourceforge.net/release/xsl/1.76.1
 XSL_XHTML_URI = $(XSL_BASE_URI)/xhtml/docbook.xsl
 
 all: $(ALLPREQ)
@@ -390,10 +404,11 @@ eclipse: eclipse-generate eclipse-resolve-links
 .PHONY : eclipse-generate eclipse-resolve-links
 
 eclipse-generate:
-ifeq ($(filter $(DOC), adt-manual bsp-guide dev-manual kernel-dev profile-manual ref-manual yocto-project-qs),)
+ifeq ($(filter $(DOC), adt-manual sdk-manual bsp-guide dev-manual kernel-dev profile-manual ref-manual yocto-project-qs),)
 	@echo " "
 	@echo "ERROR: You can only create eclipse documentation"
 	@echo "       of the following documentation parts:"
+	@echo "       - sdk-manual"
 	@echo "       - adt-manual"
 	@echo "       - bsp-guide"
 	@echo "       - dev-manual"

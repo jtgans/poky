@@ -11,19 +11,22 @@ BOOST_LIBS = "\
 	filesystem \
 	graph \
 	iostreams \
+	log \
 	program_options \
+	random \
 	regex \
 	serialization \
 	signals \
 	system \
+	timer \
 	test \
 	thread \
 	"
 
 # optional boost-python library
 PACKAGECONFIG ??= ""
-PACKAGECONFIG[python] = ",,python"
-BOOST_LIBS += "${@bb.utils.contains('PACKAGECONFIG', 'python', 'python', '', d)}"
+PACKAGECONFIG[python] = ",,python python3"
+BOOST_LIBS += "${@bb.utils.contains('PACKAGECONFIG', 'python', 'python python3', '', d)}"
 inherit python-dir
 PYTHON_ROOT = "${STAGING_DIR_HOST}/${prefix}"
 
@@ -33,9 +36,16 @@ python __anonymous () {
     packages = []
     extras = []
     for lib in d.getVar('BOOST_LIBS', True).split( ):
-            pkg = "boost-%s" % lib.replace("_", "-")
+        # BJAM does not know '--with-python3' (only --with-python)
+        if lib != "python3":
             extras.append("--with-%s" % lib)
-            packages.append(pkg)
+        pkg = "boost-%s" % lib.replace("_", "-")
+        packages.append(pkg)
+        if lib == "python":
+            # special: python*.so matches python3.so !!
+            if not d.getVar("FILES_%s" % pkg, True):
+                    d.setVar("FILES_%s" % pkg, "${libdir}/libboost_%s.so.*" % lib)
+        else:
             if not d.getVar("FILES_%s" % pkg, True):
                     d.setVar("FILES_%s" % pkg, "${libdir}/libboost_%s*.so.*" % lib)
     d.setVar("BOOST_PACKAGES", " ".join(packages))
@@ -50,6 +60,7 @@ FILES_boost-test = "${libdir}/libboost_prg_exec_monitor*.so.* \
 
 # -dev last to pick up the remaining stuff
 PACKAGES += "${PN}-dev ${PN}-staticdev"
+FILES_${PN} = ""
 FILES_${PN}-dev = "${includedir} ${libdir}/libboost_*.so"
 FILES_${PN}-staticdev = "${libdir}/libboost_*.a"
 
@@ -60,7 +71,7 @@ RRECOMMENDS_${PN}_class-native = ""
 ALLOW_EMPTY_${PN} = "1"
 
 # to avoid GNU_HASH QA errors added LDFLAGS to ARCH; a little bit dirty but at least it works
-TARGET_CC_ARCH += " ${LDFLAGS}" 
+TARGET_CC_ARCH += "${LDFLAGS}"
 
 # Oh yippee, a new build system, it's sooo cooool I could eat my own
 # foot.  inlining=on lets the compiler choose, I think.  At least this
@@ -99,14 +110,13 @@ BJAM_TOOLS   = "--ignore-site-config \
 		'-sGCC_INCLUDE_DIRECTORY=${STAGING_INCDIR}' \
 		'-sGCC_STDLIB_DIRECTORY=${STAGING_LIBDIR}' \
 		'-sBUILD=release <optimization>space <threading>multi <inlining>on <debug-symbols>off' \
-		'-sPYTHON_VERSION=${PYTHON_BASEVERSION}' \
 		'-sPYTHON_ROOT=${PYTHON_ROOT}' \
 		'--layout=system' \
 		"
 
 # use PARALLEL_MAKE to speed up the build, but limit it by -j 64, greater paralelism causes bjam to segfault or to ignore -j
 # https://svn.boost.org/trac/boost/ticket/7634
-def get_boost_parallel_make(bb, d):
+def get_boost_parallel_make(d):
     pm = d.getVar('PARALLEL_MAKE', True)
     if pm:
         # look for '-j' and throw other options (e.g. '-l') away
@@ -128,7 +138,7 @@ def get_boost_parallel_make(bb, d):
 
     return ""
 
-BOOST_PARALLEL_MAKE = "${@get_boost_parallel_make(bb, d)}"
+BOOST_PARALLEL_MAKE = "${@get_boost_parallel_make(d)}"
 BJAM_OPTS    = '${BOOST_PARALLEL_MAKE} \
 		${BJAM_TOOLS} \
 		-sBOOST_BUILD_USER_CONFIG=${S}/tools/build/example/user-config.jam \
@@ -143,17 +153,17 @@ do_boostconfig() {
 	cp -f boost/config/platform/linux.hpp boost/config/platform/linux-gnueabi.hpp
 
 	# D2194:Fixing the failure of "error: duplicate initialization of gcc with the following parameters" during compilation.
-	if ! grep -qe "^using gcc : 4.3.1" ${S}/tools/build/example/user-config.jam 
-	then
-		echo 'using gcc : 4.3.1 : ${CXX} : <cflags>"${CFLAGS}" <cxxflags>"${CXXFLAGS}" <linkflags>"${LDFLAGS}" ;' >> ${S}/tools/build/example/user-config.jam
-	fi	
-
+	sed -i "/^using gcc : 4.3.1/d" ${S}/tools/build/example/user-config.jam
+	sed -i "/^using python : ${PYTHON_BASEVERSION}"/d ${S}/tools/build/example/user-config.jam
+	echo 'using gcc : 4.3.1 : ${CXX} : <cflags>"${CFLAGS}" <cxxflags>"${CXXFLAGS}" <linkflags>"${LDFLAGS}" ;' >> ${S}/tools/build/example/user-config.jam
 	echo "using python : ${PYTHON_BASEVERSION} : : ${STAGING_INCDIR}/python${PYTHON_BASEVERSION} ;" >> ${S}/tools/build/example/user-config.jam
+	echo "using python : 3.5 : : ${STAGING_INCDIR}/python3.5m ;" >> ${S}/tools/build/example/user-config.jam
 
 	CC="${BUILD_CC}" CFLAGS="${BUILD_CFLAGS}" ./bootstrap.sh --with-bjam=bjam --with-toolset=gcc --with-python-root=${PYTHON_ROOT}
 	sed -i '/^using python/d' project-config.jam
 }
 
+do_boostconfig[dirs] = "${S}"
 addtask do_boostconfig after do_patch before do_configure
 
 do_compile() {
@@ -181,4 +191,4 @@ do_install() {
 
 }
 
-BBCLASSEXTEND = "native"
+BBCLASSEXTEND = "native nativesdk"

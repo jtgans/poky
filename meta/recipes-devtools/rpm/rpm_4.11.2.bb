@@ -22,7 +22,8 @@ HOMEPAGE = "http://www.rpm.org"
 LICENSE = "GPL-2.0+"
 LIC_FILES_CHKSUM ??= "file://${COMMON_LICENSE_DIR}/GPL-2.0;md5=801f80980d171dd6425610833a22dbe6"
 
-DEPENDS = "db libxml2 xz findutils file popt nss bzip2 elfutils patch attr zlib acl gzip make binutils python"
+DEPENDS = "db libxml2 xz findutils file popt nss bzip2 elfutils attr zlib acl gzip python"
+DEPENDS_append_class-native = " file-replacement-native"
 
 SRC_URI += "http://rpm.org/releases/rpm-4.11.x/${BP}.tar.bz2 \
             file://use-pkgconfig-for-python.patch \
@@ -34,6 +35,8 @@ SRC_URI += "http://rpm.org/releases/rpm-4.11.x/${BP}.tar.bz2 \
             file://fix_libdir.patch \
             file://rpm-scriptetexechelp.patch \
             file://pythondeps.sh \
+            file://rpm-CVE-2014-8118.patch \
+            file://rpm-CVE-2013-6435.patch \
            "
 
 SRC_URI[md5sum] = "876ac9948a88367054f8ddb5c0e87173"
@@ -98,8 +101,7 @@ do_install_append() {
 }
 
 pkg_postinst_${PN}() {
-
-    [ "x\$D" == "x" ] && ldconfig
+    [ "x\$D" = "x" ] && ldconfig
     test -f ${localstatedir}/lib/rpm/Packages || rpm --initdb
     rm -f ${localstatedir}/lib/rpm/Filemd5s \
           ${localstatedir}/lib/rpm/Filedigests \
@@ -109,7 +111,7 @@ pkg_postinst_${PN}() {
 }
 
 pkg_postrm_${PN}() {
-    [ "x\$D" == "x" ] && ldconfig
+    [ "x\$D" = "x" ] && ldconfig
 
 }
 
@@ -120,12 +122,7 @@ FILES_${PN} +=  "${libdir}/rpm \
                  ${libdir}/rpm-plugins/exec.so \
                 "
 RDEPENDS_${PN} = "base-files run-postinsts"
-RDEPENDS_${PN}_class-native = "base-files run-postinsts"
-
-FILES_${PN}-dbg += "${libdir}/rpm/.debug/* \
-                    ${libdir}/rpm-plugins/.debug/* \
-                    ${libdir}/python2.7/site-packages/rpm/.debug/* \
-                   "
+RDEPENDS_${PN}_class-native = ""
 
 FILES_${PN}-dev += "${libdir}/python2.7/site-packages/rpm/*.la"
 

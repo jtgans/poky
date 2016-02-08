@@ -15,6 +15,7 @@ inherit update-rc.d update-alternatives
 
 SRC_URI = "http://www.infodrom.org/projects/sysklogd/download/sysklogd-${PV}.tar.gz \
            file://no-strip-install.patch \
+           file://0001-Fix-build-with-musl.patch \
            file://sysklogd \
            file://syslog.conf \
            "
@@ -55,4 +56,9 @@ pkg_prerm_${PN} () {
 		/etc/init.d/syslog stop
 	fi
 	fi
+}
+
+python () {
+    if not bb.utils.contains('DISTRO_FEATURES', 'sysvinit', True, False, d):
+        d.setVar("INHIBIT_UPDATERCD_BBCLASS", "1")
 }

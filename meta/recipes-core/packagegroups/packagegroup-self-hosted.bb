@@ -28,11 +28,6 @@ RDEPENDS_packagegroup-self-hosted = "\
     packagegroup-self-hosted-host-tools \
     "
 
-# midori depends on webkit-gtk which could not build for mips64
-MIDORI = "midori"
-MIDORI_mips64 = ""
-MIDORI_mips64n32 = ""
-
 RDEPENDS_packagegroup-self-hosted-host-tools = "\
     connman \
     connman-plugin-ethernet \
@@ -62,7 +57,6 @@ RRECOMMENDS_packagegroup-self-hosted-host-tools = "\
     kernel-module-iptable-filter \
 	"
 
-# glibc-utils: for rpcgen
 RDEPENDS_packagegroup-self-hosted-sdk = "\
     autoconf \
     automake \
@@ -73,8 +67,6 @@ RDEPENDS_packagegroup-self-hosted-sdk = "\
     cpp \
     cpp-symlinks \
     distcc \
-    glibc-utils \
-    glibc-gconv-ibm850 \
     file \
     findutils \
     g++ \
@@ -98,7 +90,11 @@ RDEPENDS_packagegroup-self-hosted-sdk = "\
     quilt \
     sed \
     "
-
+# glibc-utils: for rpcgen
+RDEPENDS_packagegroup-self-hosted-sdk_append_libc-glibc = "\
+    glibc-gconv-ibm850 \
+    glibc-utils \
+    "
 RDEPENDS_packagegroup-self-hosted-debug = " \
     gdb \
     gdbserver \
@@ -117,7 +113,6 @@ RDEPENDS_packagegroup-self-hosted-extended = "\
     diffutils \
     elfutils \
     expat \
-    gamin \
     gawk \
     gdbm \
     gettext \
@@ -155,7 +150,6 @@ RDEPENDS_packagegroup-self-hosted-extended = "\
     perl-dev \
     perl-modules \
     perl-pod \
-    ${PTH} \
     python \
     python-compiler \
     python-git \
@@ -198,10 +192,8 @@ RDEPENDS_packagegroup-self-hosted-graphics = "\
     python-pygtk \
     gtk-theme-clearlooks \
     xdg-utils \
-    ${MIDORI} \
+    epiphany \
     leafpad \
     pcmanfm \
     vte \
     "
-PTH = "pth"
-PTH_libc-uclibc = ""

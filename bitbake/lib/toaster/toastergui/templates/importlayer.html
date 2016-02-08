@@ -1,24 +1,20 @@
-{% extends "baseprojectpage.html" %}
+{% extends "base.html" %}
 {% load projecttags %}
 {% load humanize %}
 {% load static %}
+{% block title %} Import layer - {{project.name}} - Toaster {% endblock %}
+{% block pagecontent %}
 
-{% block localbreadcrumb %}
-<li>Import layer</li>
-{% endblock %}
+{% include "projecttopbar.html" %}
 
-{% block projectinfomain %}
 
+        {% if project and project.release %}
+                  <script src="{% static 'js/layerDepsModal.js' %}"></script>
                   <script src="{% static 'js/importlayer.js' %}"></script>
                   <script>
                     $(document).ready(function (){
                       var ctx = {
-                        xhrDataTypeaheadUrl : "{% url 'xhr_datatypeahead' %}",
-                        layerDetailsUrl : "{% url 'base_layerdetails' %}",
                         xhrImportLayerUrl : "{% url 'xhr_importlayer' %}",
-                        xhrEditProjectUrl : "{% url 'xhr_projectedit' project.id %}",
-                        projectPageUrl : "{% url 'project' project.id %}",
-                        projectId : {{project.id}}
                       };
 
                       try {
@@ -30,26 +26,19 @@
                     });
                   </script>
 
-                <div class="page-header">
-                    <h1>Import layer</h1>
-                </div>
-
-                {% include "layers_dep_modal.html" %}
-                <form>
-        {% if project %}
-                    <span class="help-block" style="padding-left:19px;">The layer you are importing must be compatible with <strong>{{project.release.description}}</strong>, which is the release you are using in this project.</span>
-          {% endif %}
-                   <fieldset class="air">
+                <form class="span11">
+                   <fieldset>
                       <legend>Layer repository information</legend>
+                      <span class="help-block">The layer you are importing must be compatible with <strong>{{project.release.description}}</strong>, which is the release you are using in this project.</span>
                       <div class="alert alert-error" id="import-error" style="display:none">
                         <button type="button" class="close" data-dismiss="alert">&times;</button>
-                        <h3></h3>
+                        <h3>&nbsp;</h3>
                         <p></p>
                         <ul></ul>
                       </div>
 
                       <div class="control-group" id="layer-name-ctrl">
-                        <label class="control-label" for="import-layer-name">
+                        <label class="control-label air" for="import-layer-name">
                             Layer name
                             <span class="icon-question-sign get-help" title="Something like 'meta-mylayer'. Your layer name must be unique and can only include letters, numbers and dashes"></span>
                         </label>
@@ -60,7 +49,7 @@
                         </div>
 
                       </div>
-                      <span id="duplicate-layer-info" style="display:none">
+                      <div id="duplicate-layer-info" style="display:none">
                         <div class="alert warning">
                           <h3>A layer called <a href="" class="dup-layer-link"><span class="dup-layer-name"></span></a> already exists</h3>
                           <p>Layer names must be unqiue. Please use a different layer name.</p>
@@ -83,9 +72,9 @@
 
                         <p><a href="" class="dup-layer-link">View the <span class="dup-layer-name"></span> layer information</a></p>
 
-                      </span>
+                      </div>
 
-                      <span class="fields-apart-from-layer-name">
+                      <div class="fields-apart-from-layer-name">
                         <label for="layer-git-repo-url" class="project-form">
                             Git repository URL
                             <span class="icon-question-sign get-help" title="Fetch/clone URL of the repository. Currently, Toaster only supports Git repositories." ></span>
@@ -108,11 +97,11 @@
                                 <span class="help-inline" style="diaply:none;" id="invalid-layer-revision-hint"></span>
                             </div>
                           </div>
-                        </span>
+                       </div>
 
                     </fieldset>
 
-                    <span class="fields-apart-from-layer-name">
+                    <div class="fields-apart-from-layer-name">
                     <fieldset class="air">
                         <legend>
                             Layer dependencies
@@ -123,17 +112,28 @@
                         </ul>
                         <div class="input-append">
                             <input type="text" autocomplete="off" data-minLength="1" data-autocomplete="off" data-provide="typeahead" placeholder="Type a layer name" id="layer-dependency" class="input-xlarge">
-                            <a class="btn" type="button" id="add-layer-dependency-btn" disabled>
+                            <a class="btn" id="add-layer-dependency-btn">
                                 Add layer
                             </a>
                         </div>
                         <span class="help-inline">You can only add layers Toaster knows about</span>
                     </fieldset>
-                    <div class="form-actions" id="form-actions">
+                    <div class="air" id="form-actions">
                       <button class="btn btn-primary btn-large" data-toggle="modal" id="import-and-add-btn" data-target="#dependencies-message" disabled>Import and add to project</button>
-                        <span class="help-inline" id="import-and-add-hint" style="vertical-align: middle;">To import a layer, you need to enter a repository URL, a branch, tag or commit and a layer name</span>
+                        <span class="help-inline" id="import-and-add-hint" style="vertical-align: middle;">To import a layer you need to enter a layer name, a Git repository URL and a revision (branch, tag or commit)</span>
                     </div>
-                  </span>
+                  </div>
                   </form>
 
+          {% else %} {#project and project release#}
+                <div class="page-header">
+                    <h1>Import layer</h1>
+                </div>
+                      <div class="alert alert-info" id="import-error" >
+                        <h3>Unsupported project type</h3>
+                        <p>This project does not support importing layers.</p>
+                        <ul></ul>
+                      </div>
+
+          {% endif %}
 {% endblock %}

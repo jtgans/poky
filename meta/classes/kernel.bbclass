@@ -17,15 +17,15 @@ INITRAMFS_TASK ?= ""
 INITRAMFS_IMAGE_BUNDLE ?= ""
 
 python __anonymous () {
+    import re
+
     kerneltype = d.getVar('KERNEL_IMAGETYPE', True)
-    if kerneltype == 'uImage':
-        depends = d.getVar("DEPENDS", True)
-        depends = "%s u-boot-mkimage-native" % depends
-        d.setVar("DEPENDS", depends)
+
+    d.setVar("KERNEL_IMAGETYPE_FOR_MAKE", re.sub(r'\.gz$', '', kerneltype))
 
     image = d.getVar('INITRAMFS_IMAGE', True)
     if image:
-        d.appendVarFlag('do_bundle_initramfs', 'depends', ' ${INITRAMFS_IMAGE}:do_rootfs')
+        d.appendVarFlag('do_bundle_initramfs', 'depends', ' ${INITRAMFS_IMAGE}:do_image_complete')
 
     # NOTE: setting INITRAMFS_TASK is for backward compatibility
     #       The preferred method is to set INITRAMFS_IMAGE, because
@@ -35,6 +35,23 @@ python __anonymous () {
     if image_task:
         d.appendVarFlag('do_configure', 'depends', ' ${INITRAMFS_TASK}')
 }
+
+# Here we pull in all various kernel image types which we support.
+#
+# In case you're wondering why kernel.bbclass inherits the other image
+# types instead of the other way around, the reason for that is to
+# maintain compatibility with various currently existing meta-layers.
+# By pulling in the various kernel image types here, we retain the
+# original behavior of kernel.bbclass, so no meta-layers should get
+# broken.
+#
+# KERNEL_CLASSES by default pulls in kernel-uimage.bbclass, since this
+# used to be the default behavior when only uImage was supported. This
+# variable can be appended by users who implement support for new kernel
+# image types.
+
+KERNEL_CLASSES ?= " kernel-uimage "
+inherit ${KERNEL_CLASSES}
 
 # Old style kernels may set ${S} = ${WORKDIR}/git for example
 # We need to move these over to STAGING_KERNEL_DIR. We can't just
@@ -51,9 +68,13 @@ base_do_unpack_append () {
     if s != kernsrc:
         bb.utils.mkdirhier(kernsrc)
         bb.utils.remove(kernsrc, recurse=True)
-        import subprocess
-        subprocess.call(d.expand("mv ${S} ${STAGING_KERNEL_DIR}"), shell=True)
-        os.symlink(kernsrc, s)
+        if d.getVar("EXTERNALSRC", True):
+            # With EXTERNALSRC S will not be wiped so we can symlink to it
+            os.symlink(s, kernsrc)
+        else:
+            import shutil
+            shutil.move(s, kernsrc)
+            os.symlink(kernsrc, s)
 }
 
 inherit kernel-arch deploy
@@ -103,8 +124,6 @@ KERNEL_ALT_IMAGETYPE ??= ""
 # Define where the kernel headers are installed on the target as well as where
 # they are staged.
 KERNEL_SRC_PATH = "/usr/src/kernel"
-
-KERNEL_IMAGETYPE_FOR_MAKE = "${@(lambda s: s[:-3] if s[-3:] == ".gz" else s)(d.getVar('KERNEL_IMAGETYPE', True))}"
 
 copy_initramfs() {
 	echo "Copying initramfs into ./usr ..."
@@ -196,8 +215,16 @@ kernel_do_compile() {
 
 do_compile_kernelmodules() {
 	unset CFLAGS CPPFLAGS CXXFLAGS LDFLAGS MACHINE
-	if (grep -q -i -e '^CONFIG_MODULES=y$' .config); then
-		oe_runmake ${PARALLEL_MAKE} modules CC="${KERNEL_CC}" LD="${KERNEL_LD}" ${KERNEL_EXTRA_ARGS}
+	if (grep -q -i -e '^CONFIG_MODULES=y$' ${B}/.config); then
+		oe_runmake -C ${B} ${PARALLEL_MAKE} modules CC="${KERNEL_CC}" LD="${KERNEL_LD}" ${KERNEL_EXTRA_ARGS}
+
+		# Module.symvers gets updated during the 
+		# building of the kernel modules. We need to
+		# update this in the shared workdir since some
+		# external kernel modules has a dependency on
+		# other kernel modules and will look at this
+		# file to do symbol lookups
+		cp Module.symvers ${STAGING_KERNEL_BUILDDIR}/
 	else
 		bbnote "no modules to compile"
 	fi
@@ -234,13 +261,18 @@ kernel_do_install() {
 }
 do_install[prefuncs] += "package_get_auto_pr"
 
-addtask shared_workdir after do_compile before do_install
+addtask shared_workdir after do_compile before do_compile_kernelmodules
+addtask shared_workdir_setscene
+
+do_shared_workdir_setscene () {
+	exit 1
+}
 
 emit_depmod_pkgdata() {
 	# Stash data for depmod
 	install -d ${PKGDESTWORK}/kernel-depmod/
 	echo "${KERNEL_VERSION}" > ${PKGDESTWORK}/kernel-depmod/kernel-abiversion
-	cp System.map ${PKGDESTWORK}/kernel-depmod/System.map-${KERNEL_VERSION}
+	cp ${B}/System.map ${PKGDESTWORK}/kernel-depmod/System.map-${KERNEL_VERSION}
 }
 
 PACKAGEFUNCS += "emit_depmod_pkgdata"
@@ -280,8 +312,10 @@ do_shared_workdir () {
 		cp arch/powerpc/lib/crtsavres.o $kerneldir/arch/powerpc/lib/crtsavres.o
 	fi
 
-	mkdir -p $kerneldir/include/generated/
-	cp -fR include/generated/* $kerneldir/include/generated/
+	if [ -d include/generated ]; then
+		mkdir -p $kerneldir/include/generated/
+		cp -fR include/generated/* $kerneldir/include/generated/
+	fi
 
 	if [ -d arch/${ARCH}/include/generated ]; then
 		mkdir -p $kerneldir/arch/${ARCH}/include/generated/
@@ -312,11 +346,12 @@ kernel_do_configure() {
 	if [ -f "${WORKDIR}/defconfig" ] && [ ! -f "${B}/.config" ]; then
 		cp "${WORKDIR}/defconfig" "${B}/.config"
 	fi
-	eval ${KERNEL_CONFIG_COMMAND}
+
+	${KERNEL_CONFIG_COMMAND}
 }
 
 do_savedefconfig() {
-	oe_runmake savedefconfig
+	oe_runmake -C ${B} savedefconfig
 }
 do_savedefconfig[nostamp] = "1"
 addtask savedefconfig after do_configure
@@ -339,6 +374,7 @@ RDEPENDS_kernel = "kernel-base"
 # not wanted in images as standard
 RDEPENDS_kernel-base ?= "kernel-image"
 PKG_kernel-image = "kernel-image-${@legitimize_package_name('${KERNEL_VERSION}')}"
+RDEPENDS_kernel-image += "${@base_conditional('KERNEL_IMAGETYPE', 'vmlinux', 'kernel-vmlinux', '', d)}"
 PKG_kernel-base = "kernel-${@legitimize_package_name('${KERNEL_VERSION}')}"
 RPROVIDES_kernel-base += "kernel-${KERNEL_VERSION}"
 ALLOW_EMPTY_kernel = "1"
@@ -372,6 +408,18 @@ python split_kernel_packages () {
     do_split_packages(d, root='/lib/firmware', file_regex='^(.*)\.(bin|fw|cis|dsp)$', output_pattern='kernel-firmware-%s', description='Firmware for %s', recursive=True, extra_depends='')
 }
 
+# Many scripts want to look in arch/$arch/boot for the bootable
+# image. This poses a problem for vmlinux based booting. This 
+# task arranges to have vmlinux appear in the normalized directory
+# location.
+do_kernel_link_vmlinux() {
+	if [ ! -d "${B}/arch/${ARCH}/boot" ]; then
+		mkdir ${B}/arch/${ARCH}/boot
+	fi
+	cd ${B}/arch/${ARCH}/boot
+	ln -sf ../../../vmlinux
+}
+
 do_strip() {
 	if [ -n "${KERNEL_IMAGE_STRIP_EXTRA_SECTIONS}" ]; then
 		if [ "${KERNEL_IMAGETYPE}" != "vmlinux" ]; then
@@ -386,7 +434,7 @@ do_strip() {
 			  gawk '{print $1}'`
 
 		for str in ${KERNEL_IMAGE_STRIP_EXTRA_SECTIONS}; do {
-			if [ "$headers" != *"$str"* ]; then
+			if ! (echo "$headers" | grep -q "^$str$"); then
 				bbwarn "Section not found: $str";
 			fi
 
@@ -430,31 +478,6 @@ MODULE_TARBALL_BASE_NAME ?= "${MODULE_IMAGE_BASE_NAME}.tgz"
 MODULE_TARBALL_SYMLINK_NAME ?= "modules-${MACHINE}.tgz"
 MODULE_TARBALL_DEPLOY ?= "1"
 
-do_uboot_mkimage() {
-	if test "x${KERNEL_IMAGETYPE}" = "xuImage" ; then 
-		if test "x${KEEPUIMAGE}" != "xyes" ; then
-			ENTRYPOINT=${UBOOT_ENTRYPOINT}
-			if test -n "${UBOOT_ENTRYSYMBOL}"; then
-				ENTRYPOINT=`${HOST_PREFIX}nm ${S}/vmlinux | \
-					awk '$3=="${UBOOT_ENTRYSYMBOL}" {print $1}'`
-			fi
-			if test -e arch/${ARCH}/boot/compressed/vmlinux ; then
-				${OBJCOPY} -O binary -R .note -R .comment -S arch/${ARCH}/boot/compressed/vmlinux linux.bin
-				uboot-mkimage -A ${UBOOT_ARCH} -O linux -T kernel -C none -a ${UBOOT_LOADADDRESS} -e $ENTRYPOINT -n "${DISTRO_NAME}/${PV}/${MACHINE}" -d linux.bin arch/${ARCH}/boot/uImage
-				rm -f linux.bin
-			else
-				${OBJCOPY} -O binary -R .note -R .comment -S vmlinux linux.bin
-				rm -f linux.bin.gz
-				gzip -9 linux.bin
-				uboot-mkimage -A ${UBOOT_ARCH} -O linux -T kernel -C gzip -a ${UBOOT_LOADADDRESS} -e $ENTRYPOINT -n "${DISTRO_NAME}/${PV}/${MACHINE}" -d linux.bin.gz arch/${ARCH}/boot/uImage
-				rm -f linux.bin.gz
-			fi
-		fi
-	fi
-}
-
-addtask uboot_mkimage before do_install after do_compile
-
 kernel_do_deploy() {
 	install -m 0644 ${KERNEL_OUTPUT} ${DEPLOYDIR}/${KERNEL_IMAGE_BASE_NAME}.bin
 	if [ ${MODULE_TARBALL_DEPLOY} = "1" ] && (grep -q -i -e '^CONFIG_MODULES=y$' .config); then
@@ -479,6 +502,7 @@ kernel_do_deploy() {
 		ln -sf ${initramfs_base_name}.bin ${initramfs_symlink_name}.bin
 	fi
 }
+do_deploy[cleandirs] = "${DEPLOYDIR}"
 do_deploy[dirs] = "${DEPLOYDIR} ${B}"
 do_deploy[prefuncs] += "package_get_auto_pr"
 

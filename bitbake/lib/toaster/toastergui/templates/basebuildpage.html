@@ -8,14 +8,12 @@
 <!-- Breadcrumbs -->
     <div class="section">
         <ul class="breadcrumb" id="breadcrumb">
-              <li><a href="{% url 'all-builds' %}">All builds</a></li>
-          {% if MANAGED and build.project %}
-            <li><a href="{% url 'project' build.project.id %}">{{build.project.name}}</a></li>
-          {%endif%}
+            <li class="muted">{{build.project.name}}:</li>
+            <li><a href="{% url 'projectbuilds' build.project.id %}">Builds</a></li>
             <li>
             {% block parentbreadcrumb %}
             <a href="{%url 'builddashboard' build.pk%}">
-                {{build.get_sorted_target_list.0.target}} {%if build.target_set.all.count > 1%}(+ {{build.target_set.all.count|add:"-1"}}){%endif%} {%if not MANAGED %}{{build.machine}}{% endif %} ({{build.completed_on|date:"d/m/y H:i"}})
+                {{build.get_sorted_target_list.0.target}} {%if build.target_set.all.count > 1%}(+ {{build.target_set.all.count|add:"-1"}}){%endif%} ({{build.completed_on|date:"d/m/y H:i"}})
             </a>
             {% endblock %}
             </li>
@@ -23,9 +21,10 @@
         </ul>
         <script>
         $( function () {
-            $('#breadcrumb > li').append("<span class=\"divider\">→</span>");
+            $('#breadcrumb > li').append('<span class="divider">&rarr;</span>');
             $('#breadcrumb > li:last').addClass("active");
-            $('#breadcrumb > li:last > span').remove();
+            $('#breadcrumb > li:last > span, #breadcrumb > li:first > span').remove();
+	    console.log("done");
         });
         </script>
     </div>
@@ -35,6 +34,12 @@
         <!-- begin left sidebar container -->
         <div id="nav" class="span2">
             <ul class="nav nav-list well">
+              <li
+                {% if request.resolver_match.url_name == 'builddashboard'  %}
+                  class="active"
+                {% endif %} >
+                <a class="nav-parent" href="{% url 'builddashboard' build.pk %}">Build summary</a>
+              </li>
               {% if build.target_set.all.0.is_image and build.outcome == 0 %}
                 <li class="nav-header">Images</li>
                 {% block nav-target %}
